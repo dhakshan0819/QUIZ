@@ -1,0 +1,52 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Student {
+  id             Int      @id @default(autoincrement())
+  name           String
+  registerNumber String   @unique
+  department     String
+  year           String
+  section        String
+  score          Int      @default(0)
+  connected      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
+
+model Question {
+  id           Int     @id @default(autoincrement())
+  category     String
+  difficulty   String
+  question     String
+  optionA      String
+  optionB      String
+  optionC      String
+  optionD      String
+  correct      String
+  hint         String?
+  explanation  String?
+  fact         String?
+  points       Int     @default(10)
+}
+
+model Team {
+  id    Int    @id @default(autoincrement())
+  name  String
+}
+
+model Answer {
+  id         Int      @id @default(autoincrement())
+  studentId  Int
+  questionId Int
+  option     String
+  correct    Boolean
+  timeMs     Int?
+  scored     Boolean  @default(false)
+}
