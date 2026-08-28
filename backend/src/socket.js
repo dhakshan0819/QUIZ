@@ -65,6 +65,9 @@ module.exports = function(io, prisma){
         globalState.activeQuizNumber = Number(quizNumber);
       }
       globalState.quizStarted = true;
+      globalState.currentQuestionIndex = 1;
+      globalState.showLeaderboardOverlay = false;
+      io.emit('leaderboard:display', { show: false });
       io.emit('quiz:start', {
         quizNumber: globalState.activeQuizNumber,
         answerTimeLimit: globalState.answerTimeLimit,
@@ -72,9 +75,39 @@ module.exports = function(io, prisma){
       });
     });
 
+    socket.on('admin:nextQuestion', () => {
+      const { globalState } = require('./routes/quiz');
+      globalState.currentQuestionIndex += 1;
+      globalState.showLeaderboardOverlay = false;
+      io.emit('leaderboard:display', { show: false });
+      io.emit('quiz:nextQuestion', {
+        quizNumber: globalState.activeQuizNumber,
+        currentQuestionIndex: globalState.currentQuestionIndex
+      });
+    });
+
+    socket.on('admin:showLeaderboard', async (payload) => {
+      const { globalState } = require('./routes/quiz');
+      const show = payload?.show !== undefined ? Boolean(payload.show) : true;
+      globalState.showLeaderboardOverlay = show;
+      try {
+        const leaderboard = await prisma.student.findMany({ 
+          orderBy: { score: 'desc' }, 
+          take: 25,
+          select: { id: true, name: true, registerNumber: true, department: true, score: true }
+        });
+        io.emit('leaderboard:display', { show, leaderboard });
+      } catch (e) {
+        console.error('Leaderboard broadcast error:', e.message);
+        io.emit('leaderboard:display', { show, leaderboard: [] });
+      }
+    });
+
     socket.on('admin:stopQuiz', () => {
       const { globalState } = require('./routes/quiz');
       globalState.quizStarted = false;
+      globalState.showLeaderboardOverlay = false;
+      io.emit('leaderboard:display', { show: false });
       io.emit('quiz:stop', {
         quizNumber: globalState.activeQuizNumber
       });

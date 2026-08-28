@@ -36,6 +36,8 @@ export default function QuizPage() {
   const [progress, setProgress] = useState(null)
   
   const [showCheatWarning, setShowCheatWarning] = useState(false)
+  const [showBroadcastLeaderboard, setShowBroadcastLeaderboard] = useState(false)
+  const [broadcastLeaderboard, setBroadcastLeaderboard] = useState([])
   const timerRef = useRef(null)
   const previewTimerRef = useRef(null)
   const previewTimeoutRef = useRef(null)
@@ -156,29 +158,8 @@ export default function QuizPage() {
         if (data.totalScore !== undefined) {
           setCurrentScore(data.totalScore)
         }
-        const pTime = data.previewTimeLimit || previewTimeLimit || 5
-        setPreviewSeconds(pTime)
-        setStatus(`Previewing answer (${pTime}s)...`)
+        setStatus('Answer recorded! Waiting for Admin to broadcast next question...')
         socket.emit('leaderboard:refresh')
-        
-        // 5-second preview countdown timer
-        if (previewTimerRef.current) clearInterval(previewTimerRef.current)
-        previewTimerRef.current = setInterval(() => {
-          setPreviewSeconds(prev => {
-            if (prev <= 1) {
-              clearInterval(previewTimerRef.current)
-              return 0
-            }
-            return prev - 1
-          })
-        }, 1000)
-
-        // Automatically fetch next question after preview duration
-        if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current)
-        previewTimeoutRef.current = setTimeout(() => {
-          if (previewTimerRef.current) clearInterval(previewTimerRef.current)
-          fetchNextQuestion()
-        }, pTime * 1000)
       } else {
         setStatus('Error: ' + (data.error || 'Unknown error'))
         setTimeout(fetchNextQuestion, 2000)
@@ -206,14 +187,28 @@ export default function QuizPage() {
     socket.on('quiz:start', (payload) => {
       setQuizStarted(true)
       setIsComplete(false)
+      setShowBroadcastLeaderboard(false)
       if (payload?.quizNumber) setActiveQuizNumber(payload.quizNumber)
       if (payload?.answerTimeLimit) setAnswerTimeLimit(payload.answerTimeLimit)
       if (payload?.previewTimeLimit) setPreviewTimeLimit(payload.previewTimeLimit)
       fetchNextQuestion()
     })
+
+    socket.on('quiz:nextQuestion', () => {
+      setShowBroadcastLeaderboard(false)
+      fetchNextQuestion()
+    })
+
+    socket.on('leaderboard:display', (payload) => {
+      setShowBroadcastLeaderboard(Boolean(payload?.show))
+      if (payload?.leaderboard) {
+        setBroadcastLeaderboard(payload.leaderboard)
+      }
+    })
     
     socket.on('quiz:stop', (payload) => {
       setQuizStarted(false)
+      setShowBroadcastLeaderboard(false)
       if (timerRef.current) clearInterval(timerRef.current)
       if (previewTimerRef.current) clearInterval(previewTimerRef.current)
       setStatus(`Quiz ${payload?.quizNumber || activeQuizNumber} stopped by admin.`)
@@ -251,6 +246,8 @@ export default function QuizPage() {
     return () => {
       socket.off('connect', handleJoin)
       socket.off('quiz:start')
+      socket.off('quiz:nextQuestion')
+      socket.off('leaderboard:display')
       socket.off('quiz:stop')
       socket.off('student:kicked')
       if (timerRef.current) clearInterval(timerRef.current)
@@ -258,7 +255,7 @@ export default function QuizPage() {
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
-  }, [student, navigate, quizStarted, isComplete])
+  }, [student?.registerNumber, navigate, quizStarted, isComplete])
 
   const logout = () => {
     if (window.confirm('Are you sure you want to exit?')) {
@@ -433,28 +430,46 @@ export default function QuizPage() {
                   </button>
                 )}
 
-                {/* 5-Second Explanation / Preview Display */}
+                {/* Explanation / Waiting for Admin Display */}
                 {revealed && (
-                  <div className="mt-6 rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-5 text-cyan-100 animate-fade-in-up">
-                    <div className="flex justify-between items-center mb-2">
+                  <div className="mt-6 rounded-2xl border border-cyan-500/40 bg-gradient-to-b from-cyan-500/15 to-blue-500/10 p-5 text-cyan-100 animate-fade-in-up shadow-xl">
+                    <div className="flex justify-between items-center mb-3">
                       <div className="font-black text-sm text-cyan-400 uppercase tracking-widest flex items-center gap-2">
                         <span>{revealed.isCorrect ? '✅ Correct Answer!' : '❌ Incorrect'}</span>
                         {revealed.isCorrect && (
-                          <span className="px-2 py-0.5 bg-green-500/20 text-green-300 border border-green-500/30 rounded text-xs font-mono font-bold">
+                          <span className="px-2.5 py-0.5 bg-green-500/20 text-green-300 border border-green-500/40 rounded text-xs font-mono font-bold">
                             +{revealed.pointsAwarded || 10} pts
                           </span>
                         )}
                       </div>
-                      <div className="text-xs font-mono text-cyan-300/80">
-                        Next in {previewSeconds}s...
+                      <div className="flex items-center gap-2 px-3 py-1 bg-cyan-500/20 border border-cyan-500/40 rounded-full">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                        <span className="text-[11px] font-mono font-bold text-cyan-300 uppercase tracking-wider">
+                          Waiting for host...
+                        </span>
                       </div>
                     </div>
-                    <div className="text-sm leading-relaxed text-cyan-50">{revealed.explanation}</div>
-                    {revealed.fact && (
-                      <div className="mt-4 pt-3 border-t border-cyan-500/20 text-xs text-cyan-300/80">
-                        <span className="font-bold">💡 Did you know?</span> {revealed.fact}
+                    
+                    {revealed.explanation && (
+                      <div className="text-sm leading-relaxed text-cyan-50 mb-3 bg-black/30 p-3.5 rounded-xl border border-cyan-500/20">
+                        {revealed.explanation}
                       </div>
                     )}
+
+                    {revealed.fact && (
+                      <div className="pt-2 text-xs text-cyan-300/80">
+                        <span className="font-bold text-cyan-300">💡 Did you know?</span> {revealed.fact}
+                      </div>
+                    )}
+
+                    <div className="mt-4 pt-3 border-t border-cyan-500/20 flex items-center justify-between text-xs text-cyan-200/70">
+                      <span className="flex items-center gap-2">
+                        <span className="text-base">⏳</span> Stand by! The host will broadcast the next question shortly.
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono font-bold">
+                        ROUND {progress?.quizNumber || activeQuizNumber}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -462,6 +477,121 @@ export default function QuizPage() {
           )}
         </div>
       </div>
+
+      {/* FULL-SCREEN BROADCAST LEADERBOARD OVERLAY (Triggered by Admin) */}
+      {showBroadcastLeaderboard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-black/90 backdrop-blur-xl animate-fade-in-up">
+          <div className="glass cyber-glow border-2 border-yellow-500/40 bg-gradient-to-b from-yellow-950/40 via-cyan-950/60 to-black rounded-3xl max-w-2xl w-full p-6 md:p-8 relative max-h-[90vh] flex flex-col shadow-2xl shadow-yellow-500/20">
+            {/* Header */}
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 rounded-full text-xs font-black uppercase tracking-widest mb-2 animate-pulse">
+                <span>🏆 LIVE BROADCAST FROM HOST</span>
+              </div>
+              <h2 className="text-3xl md:text-4xl font-black bg-gradient-to-r from-yellow-300 via-amber-200 to-yellow-400 bg-clip-text text-transparent">
+                LEADERBOARD
+              </h2>
+              <p className="text-cyan-200/60 text-xs mt-1">
+                Real-time standings across all participants • Stand by for next round
+              </p>
+            </div>
+
+            {/* Top 3 Podium (if at least 1 student exists) */}
+            {broadcastLeaderboard.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 md:gap-3 mb-4">
+                {/* 2nd Place */}
+                {broadcastLeaderboard[1] ? (
+                  <div className="bg-gradient-to-b from-slate-400/20 to-slate-600/10 border border-slate-400/40 rounded-2xl p-3 text-center flex flex-col justify-between order-1">
+                    <div>
+                      <div className="text-2xl">🥈</div>
+                      <div className="text-[10px] font-black uppercase text-slate-300 tracking-wider mt-1">2ND PLACE</div>
+                      <div className="font-bold text-white text-xs md:text-sm truncate mt-0.5">{broadcastLeaderboard[1].name}</div>
+                    </div>
+                    <div className="text-xs font-mono font-black text-cyan-300 mt-2">{broadcastLeaderboard[1].score} pts</div>
+                  </div>
+                ) : <div className="order-1" />}
+
+                {/* 1st Place */}
+                {broadcastLeaderboard[0] ? (
+                  <div className="bg-gradient-to-b from-yellow-500/30 to-amber-600/15 border-2 border-yellow-400/60 rounded-2xl p-3 text-center flex flex-col justify-between order-2 shadow-lg shadow-yellow-500/20 scale-105">
+                    <div>
+                      <div className="text-3xl animate-bounce">👑</div>
+                      <div className="text-[10px] font-black uppercase text-yellow-300 tracking-wider mt-1">1ST PLACE</div>
+                      <div className="font-black text-white text-sm md:text-base truncate mt-0.5">{broadcastLeaderboard[0].name}</div>
+                    </div>
+                    <div className="text-sm font-mono font-black text-yellow-300 mt-2">{broadcastLeaderboard[0].score} pts</div>
+                  </div>
+                ) : <div className="order-2" />}
+
+                {/* 3rd Place */}
+                {broadcastLeaderboard[2] ? (
+                  <div className="bg-gradient-to-b from-amber-700/20 to-amber-900/10 border border-amber-600/40 rounded-2xl p-3 text-center flex flex-col justify-between order-3">
+                    <div>
+                      <div className="text-2xl">🥉</div>
+                      <div className="text-[10px] font-black uppercase text-amber-400 tracking-wider mt-1">3RD PLACE</div>
+                      <div className="font-bold text-white text-xs md:text-sm truncate mt-0.5">{broadcastLeaderboard[2].name}</div>
+                    </div>
+                    <div className="text-xs font-mono font-black text-cyan-300 mt-2">{broadcastLeaderboard[2].score} pts</div>
+                  </div>
+                ) : <div className="order-3" />}
+              </div>
+            )}
+
+            {/* Scrollable Rankings List */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+              {broadcastLeaderboard.slice(3).map((item, idx) => {
+                const isMe = item.registerNumber === student?.registerNumber
+                return (
+                  <div
+                    key={item.id || idx}
+                    className={`flex items-center justify-between p-3 rounded-xl border transition ${
+                      isMe
+                        ? 'bg-cyan-500/20 border-cyan-400 text-white shadow-md shadow-cyan-500/20'
+                        : 'bg-black/30 border-cyan-500/10 text-cyan-100 hover:bg-cyan-500/5'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-6 text-center font-mono font-black text-xs text-cyan-400">
+                        #{idx + 4}
+                      </span>
+                      <div>
+                        <div className="font-bold text-sm flex items-center gap-2">
+                          <span>{item.name}</span>
+                          {isMe && (
+                            <span className="px-1.5 py-0.2 bg-cyan-400 text-black text-[9px] font-black rounded uppercase">YOU</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-cyan-200/60 font-mono">{item.registerNumber} {item.department ? `• ${item.department}` : ''}</div>
+                      </div>
+                    </div>
+                    <div className="font-mono font-black text-sm text-yellow-300">
+                      {item.score} <span className="text-[10px] text-cyan-200/60 font-normal">pts</span>
+                    </div>
+                  </div>
+                )
+              })}
+
+              {broadcastLeaderboard.length === 0 && (
+                <div className="text-center py-8 text-cyan-200/60 text-sm font-mono">
+                  No scores recorded yet in this round.
+                </div>
+              )}
+            </div>
+
+            {/* Sticky Student Status Footer */}
+            <div className="mt-4 pt-3 border-t border-cyan-500/20 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-ping" />
+                <span className="text-cyan-200 font-semibold">
+                  Your Current Score: <span className="text-yellow-300 font-mono font-bold">{currentScore} pts</span>
+                </span>
+              </div>
+              <span className="text-[11px] font-mono text-cyan-400/80">
+                Waiting for host to continue...
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -182,6 +182,10 @@ export default function AdminDashboardSecure() {
   const [editingStudent, setEditingStudent] = useState(undefined)
   const [showEditModal, setShowEditModal] = useState(false)
 
+  // Live Quiz Manual Progression & Leaderboard Broadcast State
+  const [isBroadcastingLeaderboard, setIsBroadcastingLeaderboard] = useState(false)
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(1)
+
   const refreshData = () => {
     // Fetch students
     fetch(`${getBackendUrl()}/api/students`)
@@ -200,6 +204,14 @@ export default function AdminDashboardSecure() {
         if (j.previewTimeLimit) setPreviewTimeLimit(j.previewTimeLimit)
       })
       .catch(err => console.error(err))
+
+    fetch(`${getBackendUrl()}/api/quiz/status`)
+      .then(r => r.json())
+      .then(j => {
+        if (j.currentQuestionIndex) setCurrentQuestionIndex(j.currentQuestionIndex)
+        if (j.showLeaderboardOverlay !== undefined) setIsBroadcastingLeaderboard(j.showLeaderboardOverlay)
+      })
+      .catch(() => {})
   }
 
   useEffect(() => {
@@ -213,12 +225,22 @@ export default function AdminDashboardSecure() {
     socket.on('leaderboard:update', handleLobbyUpdate)
     socket.on('quiz:start', (payload) => {
       setQuizStarted(true)
+      setCurrentQuestionIndex(1)
+      setIsBroadcastingLeaderboard(false)
       if (payload?.quizNumber) setActiveQuizNumber(payload.quizNumber)
       refreshData()
     })
     socket.on('quiz:stop', () => {
       setQuizStarted(false)
+      setIsBroadcastingLeaderboard(false)
       refreshData()
+    })
+    socket.on('quiz:nextQuestion', (payload) => {
+      if (payload?.currentQuestionIndex) setCurrentQuestionIndex(payload.currentQuestionIndex)
+      setIsBroadcastingLeaderboard(false)
+    })
+    socket.on('leaderboard:display', (payload) => {
+      setIsBroadcastingLeaderboard(Boolean(payload?.show))
     })
     socket.on('admin:cheat_alert', (payload) => {
       setCheatAlerts(prev => [payload, ...prev].slice(0, 50))
@@ -229,9 +251,39 @@ export default function AdminDashboardSecure() {
       socket.off('leaderboard:update', handleLobbyUpdate)
       socket.off('quiz:start')
       socket.off('quiz:stop')
+      socket.off('quiz:nextQuestion')
+      socket.off('leaderboard:display')
       socket.off('admin:cheat_alert')
     }
   }, [adminToken])
+
+  // Advance to Next Question for all participants
+  const handleBroadcastNextQuestion = async () => {
+    try {
+      await fetch(`${getBackendUrl()}/api/quiz/next-question`, { method: 'POST' })
+      socket.emit('admin:nextQuestion')
+      setIsBroadcastingLeaderboard(false)
+      setCurrentQuestionIndex(prev => prev + 1)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  // Toggle Leaderboard broadcast on all participant screens
+  const handleToggleBroadcastLeaderboard = async () => {
+    try {
+      const nextShow = !isBroadcastingLeaderboard
+      await fetch(`${getBackendUrl()}/api/quiz/toggle-leaderboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ show: nextShow })
+      })
+      socket.emit('admin:showLeaderboard', { show: nextShow })
+      setIsBroadcastingLeaderboard(nextShow)
+    } catch (e) {
+      console.error(e)
+    }
+  }
 
   // Start Quiz Handler (triggered after confirmation)
   const executeStartQuiz = async (quizNumber) => {
@@ -245,6 +297,8 @@ export default function AdminDashboardSecure() {
       if (res.ok) {
         setActiveQuizNumber(qNum)
         setQuizStarted(true)
+        setCurrentQuestionIndex(1)
+        setIsBroadcastingLeaderboard(false)
         socket.emit('admin:startQuiz', { quizNumber: qNum })
         setConfirmQuizModal({ show: false, quiz: null })
         refreshData()
@@ -262,6 +316,7 @@ export default function AdminDashboardSecure() {
     try {
       await fetch(`${getBackendUrl()}/api/quiz/stop`, { method: 'POST' })
       setQuizStarted(false)
+      setIsBroadcastingLeaderboard(false)
       socket.emit('admin:stopQuiz')
       refreshData()
     } catch(e) {
@@ -796,6 +851,68 @@ export default function AdminDashboardSecure() {
             <button onClick={logout} className="px-4 py-2 rounded-lg bg-red-500/20 text-red-200 border border-red-400/30 font-semibold hover:bg-red-500/30 text-xs md:text-sm">Logout</button>
           </div>
         </div>
+
+        {/* LIVE BROADCAST COMMAND CENTER (Active when Quiz is Started) */}
+        {quizStarted && (
+          <div className="glass cyber-glow border-2 border-cyan-400/60 bg-gradient-to-r from-cyan-950/90 via-blue-950/90 to-purple-950/90 rounded-3xl p-6 mb-6 shadow-2xl shadow-cyan-500/20 animate-fade-in-up">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              <div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="w-3 h-3 rounded-full bg-green-400 animate-ping" />
+                  <span className="px-3 py-1 bg-green-500/20 border border-green-500/40 text-green-300 rounded-full text-xs font-black uppercase tracking-wider">
+                    🟢 LIVE ON AIR: QUIZ {activeQuizNumber}
+                  </span>
+                  <span className="px-3 py-1 bg-cyan-500/20 border border-cyan-500/30 text-cyan-200 rounded-full text-xs font-mono font-bold">
+                    Question #{currentQuestionIndex}
+                  </span>
+                  {isBroadcastingLeaderboard && (
+                    <span className="px-3 py-1 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 rounded-full text-xs font-bold animate-pulse">
+                      🏆 LEADERBOARD DISPLAYED ON ALL SCREENS
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-2xl md:text-3xl font-black text-white mt-2">
+                  Live Participant Broadcast Controls
+                </h2>
+                <p className="text-xs text-cyan-200/70 mt-1">
+                  Synchronize question flow for all 500+ participants and display real-time standings across all devices.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* BROADCAST NEXT QUESTION BUTTON */}
+                <button
+                  onClick={handleBroadcastNextQuestion}
+                  className="btn-cyber px-6 py-4 bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white font-black rounded-2xl shadow-xl shadow-cyan-500/30 text-sm md:text-base flex items-center gap-2 active:scale-95 transition"
+                >
+                  <span className="text-lg">⏭️</span>
+                  <span>NEXT QUESTION</span>
+                </button>
+
+                {/* BROADCAST LEADERBOARD TOGGLE BUTTON */}
+                <button
+                  onClick={handleToggleBroadcastLeaderboard}
+                  className={`px-5 py-4 rounded-2xl font-black text-xs md:text-sm tracking-wide transition-all duration-300 flex items-center gap-2 border shadow-lg ${
+                    isBroadcastingLeaderboard
+                      ? 'bg-yellow-400 text-black border-yellow-200 shadow-yellow-400/50 animate-pulse'
+                      : 'bg-yellow-500/20 hover:bg-yellow-500/30 border-yellow-500/40 text-yellow-300 hover:border-yellow-400/60'
+                  }`}
+                >
+                  <span className="text-lg">{isBroadcastingLeaderboard ? '👁️' : '🏆'}</span>
+                  <span>{isBroadcastingLeaderboard ? 'HIDE LEADERBOARD FROM ALL' : 'SHOW LEADERBOARD TO ALL'}</span>
+                </button>
+
+                {/* STOP QUIZ BUTTON */}
+                <button
+                  onClick={stopQuiz}
+                  className="px-4 py-4 rounded-2xl bg-red-950/80 border border-red-500/50 hover:bg-red-900 text-red-300 font-bold text-xs transition active:scale-95"
+                >
+                  ⏹️ STOP QUIZ
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* QUIZ ROUNDS / SETS CONTROL SECTION */}
         <div className="glass cyber-glow rounded-3xl p-6 mb-6">

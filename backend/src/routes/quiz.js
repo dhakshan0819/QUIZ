@@ -7,6 +7,8 @@ const submissionQueue = require('../utils/submissionQueue');
 const globalState = {
   quizStarted: false,
   activeQuizNumber: 1,
+  currentQuestionIndex: 1,
+  showLeaderboardOverlay: false,
   answerTimeLimit: 15,  // 15 seconds
   previewTimeLimit: 5   // 5 seconds
 };
@@ -16,6 +18,8 @@ router.get('/status', (req, res) => {
   res.json({
     quizStarted: globalState.quizStarted,
     activeQuizNumber: globalState.activeQuizNumber,
+    currentQuestionIndex: globalState.currentQuestionIndex,
+    showLeaderboardOverlay: globalState.showLeaderboardOverlay,
     answerTimeLimit: globalState.answerTimeLimit,
     previewTimeLimit: globalState.previewTimeLimit
   });
@@ -44,10 +48,14 @@ router.post('/start', async (req, res) => {
     globalState.activeQuizNumber = Number(quizNumber);
   }
   globalState.quizStarted = true;
+  globalState.currentQuestionIndex = 1;
+  globalState.showLeaderboardOverlay = false;
   res.json({ 
     success: true, 
     quizStarted: true, 
     activeQuizNumber: globalState.activeQuizNumber,
+    currentQuestionIndex: globalState.currentQuestionIndex,
+    showLeaderboardOverlay: globalState.showLeaderboardOverlay,
     answerTimeLimit: globalState.answerTimeLimit,
     previewTimeLimit: globalState.previewTimeLimit
   });
@@ -56,7 +64,39 @@ router.post('/start', async (req, res) => {
 // Admin endpoint to stop the active quiz
 router.post('/stop', async (req, res) => {
   globalState.quizStarted = false;
-  res.json({ success: true, quizStarted: false, activeQuizNumber: globalState.activeQuizNumber });
+  globalState.showLeaderboardOverlay = false;
+  res.json({ 
+    success: true, 
+    quizStarted: false, 
+    activeQuizNumber: globalState.activeQuizNumber,
+    showLeaderboardOverlay: false
+  });
+});
+
+// Admin endpoint to advance to next question
+router.post('/next-question', async (req, res) => {
+  globalState.currentQuestionIndex += 1;
+  globalState.showLeaderboardOverlay = false;
+  res.json({
+    success: true,
+    activeQuizNumber: globalState.activeQuizNumber,
+    currentQuestionIndex: globalState.currentQuestionIndex,
+    showLeaderboardOverlay: false
+  });
+});
+
+// Admin endpoint to toggle broadcast leaderboard
+router.post('/toggle-leaderboard', async (req, res) => {
+  const { show } = req.body || {};
+  if (show !== undefined) {
+    globalState.showLeaderboardOverlay = Boolean(show);
+  } else {
+    globalState.showLeaderboardOverlay = !globalState.showLeaderboardOverlay;
+  }
+  res.json({
+    success: true,
+    showLeaderboardOverlay: globalState.showLeaderboardOverlay
+  });
 });
 
 // Get summary of all quizzes (Quiz 1, Quiz 2, Quiz 3, etc.) with question counts
