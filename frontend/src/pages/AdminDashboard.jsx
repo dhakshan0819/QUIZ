@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { io } from 'socket.io-client'
 import { motion } from 'framer-motion'
-
-const socket = io('http://localhost:4000');
+import socket from '../utils/socket'
+import { getBackendUrl } from '../utils/config'
 
 const ParticleBackground = () => {
   const [particles, setParticles] = useState([])
@@ -43,7 +42,7 @@ export default function AdminDashboard(){
   const [certStudent, setCertStudent] = useState('');
 
   useEffect(()=>{
-    fetch('http://localhost:4000/api/questions').then(r=>r.json()).then(j=>setQuestions(j.questions || []));
+    fetch(`${getBackendUrl()}/api/questions`).then(r=>r.json()).then(j=>setQuestions(j.questions || []));
     socket.on('leaderboard:update', (p)=> setLeaderboard(p.leaderboard || []))
     socket.on('lobby:update', (p)=> console.log('lobby', p));
     socket.on('question:tick', (p)=> console.log('tick', p));
@@ -60,16 +59,16 @@ export default function AdminDashboard(){
   }
 
   const downloadCSV = () => {
-    window.location.href = 'http://localhost:4000/api/exports/results/csv';
+    window.location.href = `${getBackendUrl()}/api/exports/results/csv`;
   }
 
   const downloadXLSX = () => {
-    window.location.href = 'http://localhost:4000/api/exports/results/xlsx';
+    window.location.href = `${getBackendUrl()}/api/exports/results/xlsx`;
   }
 
   const downloadCertificate = () => {
     if (certStudent.trim()) {
-      window.location.href = `http://localhost:4000/api/exports/certificate/${certStudent}`;
+      window.location.href = `${getBackendUrl()}/api/exports/certificate/${certStudent}`;
     }
   }
 

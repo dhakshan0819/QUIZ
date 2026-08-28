@@ -74,10 +74,7 @@ function LoginPanel({ onLogin }) {
           </div>
           <div>
             <label className="block text-cyan-300 text-sm font-semibold mb-2">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 bg-cyan-500/5 border border-cyan-500/30 rounded-lg text-cyan-100 placeholder-cyan-400/40" placeholder="password" />
-          </div>
-          <div className="text-xs text-cyan-300/60 bg-cyan-500/10 p-2 rounded border border-cyan-500/20">
-            ℹ️ Default: <span className="text-cyan-200 font-mono">admin</span> / <span className="text-cyan-200 font-mono">password</span> (configured in <span className="font-mono">backend/.env</span>)
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 bg-cyan-500/5 border border-cyan-500/30 rounded-lg text-cyan-100 placeholder-cyan-400/40" placeholder="••••••••" />
           </div>
           {message && <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">{message}</div>}
           <button disabled={busy} className="btn-cyber w-full px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-bold rounded-lg">

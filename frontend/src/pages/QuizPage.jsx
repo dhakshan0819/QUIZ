@@ -231,7 +231,9 @@ export default function QuizPage() {
     socket.on('student:locked', (payload) => {
       setIsLocked(true)
       setLockReason(payload?.reason || 'Window focus lost (switched tabs or apps)')
+      setQuestion(null)
       if (timerRef.current) clearInterval(timerRef.current)
+      if (previewTimerRef.current) clearInterval(previewTimerRef.current)
       setStatus('Screen locked: Awaiting admin unlock...')
     })
 
@@ -257,18 +259,29 @@ export default function QuizPage() {
     // Initial fetch
     fetchNextQuestion()
 
-    // Anti-cheat mechanisms: Instantly lock screen upon focus loss
-    const handleBlur = () => {
+    // Anti-cheat mechanisms: Instantly lock screen upon focus loss or tab switch
+    const triggerCheatLock = (reason) => {
       if (quizStarted && !isComplete && !isLocked) {
-        const reason = 'Window focus lost (switched tabs or apps)'
         setIsLocked(true)
         setLockReason(reason)
+        setQuestion(null)
         if (timerRef.current) clearInterval(timerRef.current)
+        if (previewTimerRef.current) clearInterval(previewTimerRef.current)
         setStatus('Screen locked: Awaiting admin unlock...')
         socket.emit('student:cheat_alert', { 
           registerNumber: student.registerNumber,
           action: reason
         })
+      }
+    }
+
+    const handleBlur = () => {
+      triggerCheatLock('Window focus lost (switched tabs or apps)')
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        triggerCheatLock('Tab hidden or switched')
       }
     }
 
@@ -280,6 +293,7 @@ export default function QuizPage() {
     }
 
     window.addEventListener('blur', handleBlur)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('beforeunload', handleBeforeUnload)
 
     return () => {
@@ -294,6 +308,7 @@ export default function QuizPage() {
       if (timerRef.current) clearInterval(timerRef.current)
       if (previewTimerRef.current) clearInterval(previewTimerRef.current)
       window.removeEventListener('blur', handleBlur)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
   }, [student?.registerNumber, navigate, quizStarted, isComplete, isLocked])

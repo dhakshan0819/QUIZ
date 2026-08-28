@@ -14,7 +14,7 @@ services:
       - key: ADMIN_USER
         value: admin
       - key: ADMIN_PASS
-        value: password
+        value: impossible
       - key: ADMIN_SECRET
         generateValue: true
       - key: DATABASE_URL

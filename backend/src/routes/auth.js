@@ -6,7 +6,7 @@ router.post('/admin/login', (req, res)=>{
   const { username, password } = req.body || {};
   if(!username || !password) return res.status(400).json({ error: 'username/password required' });
   const expectedUser = process.env.ADMIN_USER || 'admin';
-  const expectedPass = process.env.ADMIN_PASS || 'password';
+  const expectedPass = process.env.ADMIN_PASS || 'impossible';
   if(username === expectedUser && password === expectedPass){
     const token = jwt.sign({ role: 'admin', user: username }, process.env.ADMIN_SECRET || 'secret', { expiresIn: '8h' });
     return res.json({ token });
