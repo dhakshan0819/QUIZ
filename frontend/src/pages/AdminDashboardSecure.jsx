@@ -179,6 +179,7 @@ export default function AdminDashboardSecure() {
   const [showQR, setShowQR] = useState(false)
   const [qrInfo, setQrInfo] = useState({ qrCode: '', url: '' })
   const [cheatAlerts, setCheatAlerts] = useState([])
+  const [lockedStudents, setLockedStudents] = useState({}) // { [registerNumber]: { name, reason, timestamp } }
   const [editingStudent, setEditingStudent] = useState(undefined)
   const [showEditModal, setShowEditModal] = useState(false)
 
@@ -210,6 +211,13 @@ export default function AdminDashboardSecure() {
       .then(j => {
         if (j.currentQuestionIndex) setCurrentQuestionIndex(j.currentQuestionIndex)
         if (j.showLeaderboardOverlay !== undefined) setIsBroadcastingLeaderboard(j.showLeaderboardOverlay)
+      })
+      .catch(() => {})
+
+    fetch(`${getBackendUrl()}/api/quiz/locked-students`)
+      .then(r => r.json())
+      .then(j => {
+        if (j.lockedStudents) setLockedStudents(j.lockedStudents)
       })
       .catch(() => {})
   }
@@ -244,6 +252,25 @@ export default function AdminDashboardSecure() {
     })
     socket.on('admin:cheat_alert', (payload) => {
       setCheatAlerts(prev => [payload, ...prev].slice(0, 50))
+      if (payload?.registerNumber) {
+        setLockedStudents(prev => ({
+          ...prev,
+          [payload.registerNumber]: {
+            name: payload.name,
+            reason: payload.action,
+            timestamp: payload.timestamp
+          }
+        }))
+      }
+    })
+    socket.on('admin:student_unlocked', (payload) => {
+      if (payload?.registerNumber) {
+        setLockedStudents(prev => {
+          const updated = { ...prev }
+          delete updated[payload.registerNumber]
+          return updated
+        })
+      }
     })
 
     return () => {
@@ -254,8 +281,28 @@ export default function AdminDashboardSecure() {
       socket.off('quiz:nextQuestion')
       socket.off('leaderboard:display')
       socket.off('admin:cheat_alert')
+      socket.off('admin:student_unlocked')
     }
   }, [adminToken])
+
+  // Explicitly unlock a student so they can resume answering
+  const handleUnlockStudent = async (registerNumber) => {
+    try {
+      await fetch(`${getBackendUrl()}/api/quiz/unlock-student`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registerNumber })
+      })
+      socket.emit('admin:unlockStudent', { registerNumber })
+      setLockedStudents(prev => {
+        const updated = { ...prev }
+        delete updated[registerNumber]
+        return updated
+      })
+    } catch (e) {
+      console.error('Error unlocking student:', e)
+    }
+  }
 
   // Advance to Next Question for all participants
   const handleBroadcastNextQuestion = async () => {
@@ -1072,8 +1119,20 @@ export default function AdminDashboardSecure() {
 
           {/* Live Anti-Cheat Focus Loss Feed */}
           <motion.div className="xl:col-span-3 glass cyber-glow rounded-2xl p-6 backdrop-blur-xl border-l-4 border-red-500/50">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold text-red-400 flex items-center gap-2">⚠️ Anti-Cheat & Focus Loss Feed</h3>
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+              <div>
+                <h3 className="text-xl font-bold text-red-400 flex items-center gap-2">
+                  <span>⚠️ Anti-Cheat & Screen Lock Controls</span>
+                  {Object.keys(lockedStudents).length > 0 && (
+                    <span className="px-2 py-0.5 bg-red-500 text-white rounded-full text-xs font-black animate-pulse">
+                      {Object.keys(lockedStudents).length} LOCKED
+                    </span>
+                  )}
+                </h3>
+                <p className="text-[11px] text-cyan-200/60 mt-0.5">
+                  Locked participants cannot answer questions until you click "Allow Participant".
+                </p>
+              </div>
               <button 
                 onClick={() => setCheatAlerts([])} 
                 className="px-3 py-1 bg-red-500/20 text-red-300 border border-red-500/40 rounded hover:bg-red-500/40 text-xs font-bold"
@@ -1081,23 +1140,49 @@ export default function AdminDashboardSecure() {
                 CLEAR LOGS
               </button>
             </div>
-            <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-[35vh] overflow-y-auto pr-1">
               {cheatAlerts.length === 0 ? (
                 <div className="text-xs text-cyan-200/40 py-6 text-center font-mono">No suspicious activity detected. Systems normal.</div>
               ) : (
-                cheatAlerts.map((alert, idx) => (
-                  <div key={idx} className="flex flex-wrap items-center justify-between p-3 bg-red-950/40 rounded-lg border border-red-500/30">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-red-200 font-bold truncate text-sm">
-                        {alert.name} <span className="text-red-300/60 font-normal text-xs">({alert.registerNumber})</span>
+                cheatAlerts.map((alert, idx) => {
+                  const isLocked = Boolean(lockedStudents[alert.registerNumber])
+                  return (
+                    <div key={idx} className="flex flex-wrap items-center justify-between p-3 bg-red-950/40 rounded-xl border border-red-500/30 gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-red-200 font-bold text-sm">
+                            {alert.name} <span className="text-red-300/60 font-normal text-xs">({alert.registerNumber})</span>
+                          </span>
+                          {isLocked ? (
+                            <span className="px-2 py-0.5 rounded bg-red-500/30 border border-red-500/60 text-red-300 text-[10px] font-black uppercase tracking-wider animate-pulse">
+                              🔒 LOCKED
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-green-500/20 border border-green-500/40 text-green-300 text-[10px] font-bold uppercase">
+                              ✅ UNLOCKED
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-red-400/80 text-[10px] font-mono mt-0.5">{alert.action}</div>
                       </div>
-                      <div className="text-red-400/80 text-[10px] font-mono">{alert.action}</div>
+                      
+                      <div className="flex items-center gap-3">
+                        <div className="text-red-500/50 text-[10px] whitespace-nowrap">
+                          {alert.timestamp ? new Date(alert.timestamp).toLocaleTimeString() : ''}
+                        </div>
+                        {isLocked && (
+                          <button
+                            onClick={() => handleUnlockStudent(alert.registerNumber)}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs shadow-lg shadow-emerald-500/30 transition active:scale-95 flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>🔓</span>
+                            <span>ALLOW PARTICIPANT</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-red-500/50 text-[10px] whitespace-nowrap pl-4">
-                      {new Date(alert.timestamp).toLocaleTimeString()}
-                    </div>
-                  </div>
-                ))
+                  )
+                })
               )}
             </div>
           </motion.div>
@@ -1133,31 +1218,51 @@ export default function AdminDashboardSecure() {
                       <td colSpan="5" className="text-center py-6 text-cyan-200/40">No participants registered.</td>
                     </tr>
                   ) : (
-                    students.map((student) => (
-                      <tr key={student.id} className="hover:bg-cyan-500/5 transition">
-                        <td className="px-4 py-3 font-semibold">
-                          {student.name}
-                          <div className={student.connected ? 'text-green-400 text-[9px] mt-0.5' : 'text-cyan-200/40 text-[9px] mt-0.5'}>{student.connected ? '🟢 Online' : '🔴 Offline'}</div>
-                        </td>
-                        <td className="px-4 py-3 font-mono">{student.registerNumber}</td>
-                        <td className="px-4 py-3">{student.department || '-'}</td>
-                        <td className="px-4 py-3 font-bold text-blue-300">{student.score}</td>
-                        <td className="px-4 py-3 text-right space-x-2">
-                          <button 
-                            onClick={() => { setEditingStudent(student); setShowEditModal(true); }}
-                            className="px-2 py-1 rounded bg-blue-500/20 text-blue-200 border border-blue-400/30 text-[10px] font-semibold hover:bg-blue-500/40 transition"
-                          >
-                            Edit
-                          </button>
-                          <button 
-                            onClick={() => removeParticipant(student.registerNumber)} 
-                            className="px-2 py-1 rounded bg-red-500/20 text-red-200 border border-red-400/30 text-[10px] font-semibold hover:bg-red-500/40 transition"
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    students.map((student) => {
+                      const isLocked = Boolean(lockedStudents[student.registerNumber])
+                      return (
+                        <tr key={student.id} className={`transition ${isLocked ? 'bg-red-950/20' : 'hover:bg-cyan-500/5'}`}>
+                          <td className="px-4 py-3 font-semibold">
+                            <div className="flex items-center gap-2">
+                              <span>{student.name}</span>
+                              {isLocked && (
+                                <span className="px-1.5 py-0.2 rounded bg-red-500/30 text-red-300 text-[9px] font-black uppercase">
+                                  🔒 LOCKED
+                                </span>
+                              )}
+                            </div>
+                            <div className={student.connected ? 'text-green-400 text-[9px] mt-0.5' : 'text-cyan-200/40 text-[9px] mt-0.5'}>
+                              {student.connected ? '🟢 Online' : '🔴 Offline'}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 font-mono">{student.registerNumber}</td>
+                          <td className="px-4 py-3">{student.department || '-'}</td>
+                          <td className="px-4 py-3 font-bold text-blue-300">{student.score}</td>
+                          <td className="px-4 py-3 text-right space-x-2">
+                            {isLocked && (
+                              <button 
+                                onClick={() => handleUnlockStudent(student.registerNumber)}
+                                className="px-2.5 py-1 rounded bg-emerald-500 text-black font-black text-[10px] shadow-sm hover:bg-emerald-400 transition"
+                              >
+                                🔓 Allow
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => { setEditingStudent(student); setShowEditModal(true); }}
+                              className="px-2 py-1 rounded bg-blue-500/20 text-blue-200 border border-blue-400/30 text-[10px] font-semibold hover:bg-blue-500/40 transition"
+                            >
+                              Edit
+                            </button>
+                            <button 
+                              onClick={() => removeParticipant(student.registerNumber)} 
+                              className="px-2 py-1 rounded bg-red-500/20 text-red-200 border border-red-400/30 text-[10px] font-semibold hover:bg-red-500/40 transition"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })
                   )}
                 </tbody>
               </table>

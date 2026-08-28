@@ -1,9 +1,26 @@
-module.exports = function(io, prisma){
-  const state = {
-    students: {},
-    registerToSocket: {}
-  };
+const state = {
+  students: {},
+  registerToSocket: {},
+  lockedStudents: {} // { [registerNumber]: { reason, timestamp, name } }
+};
 
+function isStudentLocked(registerNumber) {
+  return Boolean(state.lockedStudents[registerNumber]);
+}
+
+function getLockedReason(registerNumber) {
+  return state.lockedStudents[registerNumber]?.reason || null;
+}
+
+function unlockStudent(registerNumber) {
+  delete state.lockedStudents[registerNumber];
+}
+
+function getLockedStudents() {
+  return state.lockedStudents;
+}
+
+function socketHandler(io, prisma) {
   // Throttled broadcasts to avoid network congestion with 400+ concurrent clients
   let lobbyUpdateTimeout = null;
   const emitLobbyUpdateThrottled = () => {
@@ -56,6 +73,14 @@ module.exports = function(io, prisma){
       state.students[socket.id] = { registerNumber };
       state.registerToSocket[registerNumber] = socket.id;
       emitLobbyUpdateThrottled();
+
+      // If student was already locked by anti-cheat, enforce lock immediately
+      if (state.lockedStudents[registerNumber]) {
+        socket.emit('student:locked', {
+          reason: state.lockedStudents[registerNumber].reason,
+          timestamp: state.lockedStudents[registerNumber].timestamp
+        });
+      }
     });
 
     socket.on('admin:startQuiz', (payload) => {
@@ -118,11 +143,13 @@ module.exports = function(io, prisma){
       globalState.quizStarted = false;
       state.students = {};
       state.registerToSocket = {};
+      state.lockedStudents = {};
       io.emit('quiz:stop');
       io.emit('student:kicked');
       io.emit('lobby:update', { count: 0 });
     });
 
+    // Anti-Cheat: Lock student screen and notify admin
     socket.on('student:cheat_alert', async (payload) => {
       const { registerNumber, action } = payload || {};
       if (!registerNumber) return;
@@ -131,13 +158,57 @@ module.exports = function(io, prisma){
         select: { registerNumber: true, name: true }
       });
       if (student) {
+        const reason = action || 'Window focus lost (switched tabs or apps)';
+        const timestamp = new Date().toISOString();
+        
+        // Save to locked students registry
+        state.lockedStudents[registerNumber] = {
+          reason,
+          timestamp,
+          name: student.name
+        };
+
+        // Lock student's screen immediately
+        const targetSocketId = state.registerToSocket[registerNumber];
+        if (targetSocketId) {
+          const targetSocket = io.sockets.sockets.get(targetSocketId);
+          if (targetSocket) {
+            targetSocket.emit('student:locked', {
+              reason,
+              timestamp
+            });
+          }
+        }
+
+        // Broadcast alert to admin panel
         io.emit('admin:cheat_alert', { 
           registerNumber: student.registerNumber, 
           name: student.name, 
-          action: action || 'Window blur detected',
-          timestamp: new Date().toISOString()
+          action: reason,
+          timestamp,
+          locked: true
         });
       }
+    });
+
+    // Admin: Explicitly unlock a student so they can resume
+    socket.on('admin:unlockStudent', (payload) => {
+      const { registerNumber } = payload || {};
+      if (!registerNumber) return;
+      
+      delete state.lockedStudents[registerNumber];
+
+      // Notify the student's screen to unlock and resume
+      const targetSocketId = state.registerToSocket[registerNumber];
+      if (targetSocketId) {
+        const targetSocket = io.sockets.sockets.get(targetSocketId);
+        if (targetSocket) {
+          targetSocket.emit('student:unlocked', { registerNumber });
+        }
+      }
+
+      // Notify admin dashboard
+      io.emit('admin:student_unlocked', { registerNumber });
     });
 
     socket.on('leaderboard:refresh', () => {
@@ -164,6 +235,7 @@ module.exports = function(io, prisma){
 
       delete state.registerToSocket[registerNumber];
       delete state.students[targetSocketId];
+      delete state.lockedStudents[registerNumber];
       emitLobbyUpdateThrottled();
       emitLeaderboardUpdateThrottled();
     });
@@ -178,4 +250,11 @@ module.exports = function(io, prisma){
       emitLobbyUpdateThrottled();
     });
   });
-};
+}
+
+module.exports = socketHandler;
+module.exports.state = state;
+module.exports.isStudentLocked = isStudentLocked;
+module.exports.getLockedReason = getLockedReason;
+module.exports.unlockStudent = unlockStudent;
+module.exports.getLockedStudents = getLockedStudents;

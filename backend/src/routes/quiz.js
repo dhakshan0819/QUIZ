@@ -99,6 +99,22 @@ router.post('/toggle-leaderboard', async (req, res) => {
   });
 });
 
+// Get list of currently locked students
+router.get('/locked-students', (req, res) => {
+  const { getLockedStudents } = require('../socket');
+  const locked = getLockedStudents ? getLockedStudents() : {};
+  res.json({ lockedStudents: locked });
+});
+
+// Unlock a student
+router.post('/unlock-student', (req, res) => {
+  const { registerNumber } = req.body || {};
+  if (!registerNumber) return res.status(400).json({ error: 'registerNumber required' });
+  const { unlockStudent } = require('../socket');
+  if (unlockStudent) unlockStudent(registerNumber);
+  res.json({ success: true, registerNumber, unlocked: true });
+});
+
 // Get summary of all quizzes (Quiz 1, Quiz 2, Quiz 3, etc.) with question counts
 router.get('/quizzes', async (req, res) => {
   try {
@@ -338,6 +354,16 @@ router.get('/next', async (req, res) => {
     return res.status(400).json({ error: 'registerNumber required' });
   }
 
+  const { isStudentLocked, getLockedReason } = require('../socket');
+  if (isStudentLocked && isStudentLocked(registerNumber)) {
+    return res.json({
+      quizStarted: true,
+      locked: true,
+      lockReason: getLockedReason(registerNumber) || 'Anti-cheat lock active. Awaiting host approval.',
+      activeQuizNumber: globalState.activeQuizNumber
+    });
+  }
+
   const student = await prisma.student.findUnique({ where: { registerNumber } });
   if (!student) {
     return res.status(404).json({ error: 'student not found' });
@@ -426,6 +452,15 @@ router.post('/submit', async (req, res) => {
 
   if (!registerNumber || !questionId || !option) {
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  const { isStudentLocked, getLockedReason } = require('../socket');
+  if (isStudentLocked && isStudentLocked(registerNumber)) {
+    return res.status(403).json({ 
+      error: 'Your screen is locked due to an anti-cheat violation. You cannot submit answers until the host unlocks your screen.',
+      locked: true,
+      reason: getLockedReason(registerNumber)
+    });
   }
 
   const student = await prisma.student.findUnique({ where: { registerNumber } });

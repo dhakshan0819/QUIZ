@@ -35,7 +35,8 @@ export default function QuizPage() {
   const [isComplete, setIsComplete] = useState(false)
   const [progress, setProgress] = useState(null)
   
-  const [showCheatWarning, setShowCheatWarning] = useState(false)
+  const [isLocked, setIsLocked] = useState(false)
+  const [lockReason, setLockReason] = useState('')
   const [showBroadcastLeaderboard, setShowBroadcastLeaderboard] = useState(false)
   const [broadcastLeaderboard, setBroadcastLeaderboard] = useState([])
   const timerRef = useRef(null)
@@ -57,6 +58,18 @@ export default function QuizPage() {
       
       if (data.totalScore !== undefined) {
         setCurrentScore(data.totalScore)
+      }
+
+      if (data.locked) {
+        setIsLocked(true)
+        setLockReason(data.lockReason || 'Anti-cheat violation detected. Awaiting admin approval.')
+        setQuestion(null)
+        setProgress(null)
+        setRevealed(null)
+        setStatus('Screen locked: Awaiting admin unlock...')
+        return
+      } else {
+        setIsLocked(false)
       }
 
       if (!data.quizStarted) {
@@ -111,18 +124,18 @@ export default function QuizPage() {
   }
 
   const handleTimeUp = () => {
-    if (submittingRef.current || revealed) return
+    if (submittingRef.current || revealed || isLocked) return
     submitFinalAnswer(selectedRef.current)
   }
 
   const handleOptionClick = (key) => {
-    if (seconds <= 0 || revealed || submittingRef.current) return
+    if (seconds <= 0 || revealed || submittingRef.current || isLocked) return
     setSelected(key)
     selectedRef.current = key
   }
 
   const handleManualSubmit = () => {
-    if (seconds <= 0 || revealed || submittingRef.current || !selectedRef.current) return
+    if (seconds <= 0 || revealed || submittingRef.current || !selectedRef.current || isLocked) return
     if (timerRef.current) clearInterval(timerRef.current)
     setSeconds(0)
     submitFinalAnswer(selectedRef.current)
@@ -130,7 +143,7 @@ export default function QuizPage() {
 
   const submitFinalAnswer = async (option) => {
     const currentQ = questionRef.current
-    if (!currentQ || !student) return
+    if (!currentQ || !student || isLocked) return
     
     if (submittingRef.current || revealed) return
     submittingRef.current = true
@@ -153,6 +166,13 @@ export default function QuizPage() {
       })
       const data = await res.json()
       
+      if (data.locked) {
+        setIsLocked(true)
+        setLockReason(data.error || 'Screen locked due to anti-cheat violation.')
+        setStatus('Screen locked: Awaiting admin unlock...')
+        return
+      }
+
       if (data.success) {
         setRevealed(data)
         if (data.totalScore !== undefined) {
@@ -196,7 +216,9 @@ export default function QuizPage() {
 
     socket.on('quiz:nextQuestion', () => {
       setShowBroadcastLeaderboard(false)
-      fetchNextQuestion()
+      if (!isLocked) {
+        fetchNextQuestion()
+      }
     })
 
     socket.on('leaderboard:display', (payload) => {
@@ -204,6 +226,19 @@ export default function QuizPage() {
       if (payload?.leaderboard) {
         setBroadcastLeaderboard(payload.leaderboard)
       }
+    })
+
+    socket.on('student:locked', (payload) => {
+      setIsLocked(true)
+      setLockReason(payload?.reason || 'Window focus lost (switched tabs or apps)')
+      if (timerRef.current) clearInterval(timerRef.current)
+      setStatus('Screen locked: Awaiting admin unlock...')
+    })
+
+    socket.on('student:unlocked', () => {
+      setIsLocked(false)
+      setLockReason('')
+      fetchNextQuestion()
     })
     
     socket.on('quiz:stop', (payload) => {
@@ -222,13 +257,17 @@ export default function QuizPage() {
     // Initial fetch
     fetchNextQuestion()
 
-    // Anti-cheat mechanisms
+    // Anti-cheat mechanisms: Instantly lock screen upon focus loss
     const handleBlur = () => {
-      if (quizStarted && !isComplete) {
-        setShowCheatWarning(true)
+      if (quizStarted && !isComplete && !isLocked) {
+        const reason = 'Window focus lost (switched tabs or apps)'
+        setIsLocked(true)
+        setLockReason(reason)
+        if (timerRef.current) clearInterval(timerRef.current)
+        setStatus('Screen locked: Awaiting admin unlock...')
         socket.emit('student:cheat_alert', { 
           registerNumber: student.registerNumber,
-          action: 'Window focus lost (switched tabs or apps)'
+          action: reason
         })
       }
     }
@@ -248,6 +287,8 @@ export default function QuizPage() {
       socket.off('quiz:start')
       socket.off('quiz:nextQuestion')
       socket.off('leaderboard:display')
+      socket.off('student:locked')
+      socket.off('student:unlocked')
       socket.off('quiz:stop')
       socket.off('student:kicked')
       if (timerRef.current) clearInterval(timerRef.current)
@@ -255,7 +296,7 @@ export default function QuizPage() {
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
-  }, [student?.registerNumber, navigate, quizStarted, isComplete])
+  }, [student?.registerNumber, navigate, quizStarted, isComplete, isLocked])
 
   const logout = () => {
     if (window.confirm('Are you sure you want to exit?')) {
@@ -266,17 +307,41 @@ export default function QuizPage() {
 
   return (
     <div className="content-wrapper page-shell min-h-[100dvh] flex flex-col">
-      {/* Cheat Warning Overlay */}
-      {showCheatWarning && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-red-950/95 backdrop-blur-md">
-          <div className="glass cyber-glow border-red-500 rounded-2xl max-w-sm w-full p-8 text-center bg-red-900/50">
-            <h2 className="text-3xl font-black text-red-400 mb-4 animate-pulse">WARNING</h2>
-            <p className="text-red-200 mb-6 font-semibold">
-              You left the quiz window. This action has been recorded and flagged to the administrator.
+      {/* STRICT ANTI-CHEAT SCREEN LOCK OVERLAY (Un-dismissible without Admin Approval) */}
+      {isLocked && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-black/95 backdrop-blur-2xl animate-fade-in-up">
+          <div className="glass cyber-glow border-2 border-red-500/80 rounded-3xl max-w-md w-full p-8 text-center bg-gradient-to-b from-red-950/90 via-black to-red-950/80 shadow-2xl shadow-red-500/40 relative">
+            <div className="w-20 h-20 rounded-full bg-red-500/20 border-2 border-red-500/60 flex items-center justify-center mx-auto mb-5 shadow-xl shadow-red-500/20">
+              <span className="text-4xl animate-pulse">🔒</span>
+            </div>
+            
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-red-500/20 border border-red-500/40 text-red-300 rounded-full text-xs font-black uppercase tracking-widest mb-3">
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+              <span>ACCESS RESTRICTED</span>
+            </div>
+
+            <h2 className="text-2xl md:text-3xl font-black text-white mb-2">
+              SCREEN LOCKED
+            </h2>
+            
+            <div className="bg-red-500/15 border border-red-500/30 rounded-xl p-3 mb-4 text-xs font-mono text-red-200">
+              ⚠️ Reason: {lockReason || 'Window focus lost / tab switch'}
+            </div>
+
+            <p className="text-cyan-200/70 text-xs leading-relaxed mb-6">
+              Your session has been frozen because a tab switch or application change was detected. The quiz is continuing for other participants, but you cannot view or submit answers until the administrator explicitly approves and unlocks your screen.
             </p>
-            <button onClick={() => setShowCheatWarning(false)} className="btn-cyber w-full py-4 bg-red-600 text-white font-bold rounded-xl hover:bg-red-500 text-lg">
-              I UNDERSTAND
-            </button>
+
+            <div className="p-4 rounded-xl bg-black/60 border border-yellow-500/30 flex items-center justify-center gap-3">
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-ping" />
+              <span className="text-xs font-mono text-yellow-300 font-bold">
+                Awaiting Administrator Approval...
+              </span>
+            </div>
+
+            <div className="mt-5 pt-4 border-t border-red-500/20 text-[11px] text-cyan-200/50 font-mono">
+              Participant: <span className="text-white font-bold">{student?.name}</span> ({student?.registerNumber})
+            </div>
           </div>
         </div>
       )}
