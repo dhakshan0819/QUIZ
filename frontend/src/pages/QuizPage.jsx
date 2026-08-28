@@ -16,7 +16,17 @@ export default function QuizPage() {
   const student = auth?.student
   const [question, setQuestion] = useState(null)
   const questionRef = useRef(null)
-  const [seconds, setSeconds] = useState(10)
+  
+  // Cumulative score across all quizzes
+  const [currentScore, setCurrentScore] = useState(student?.score || 0)
+  
+  // Timing state
+  const [answerTimeLimit, setAnswerTimeLimit] = useState(15) // default 15s
+  const [previewTimeLimit, setPreviewTimeLimit] = useState(5) // default 5s
+  const [seconds, setSeconds] = useState(15)
+  const [previewSeconds, setPreviewSeconds] = useState(5)
+
+  const [activeQuizNumber, setActiveQuizNumber] = useState(1)
   const [status, setStatus] = useState('Checking quiz status...')
   const [selected, setSelected] = useState(null)
   const [revealed, setRevealed] = useState(null)
@@ -27,40 +37,60 @@ export default function QuizPage() {
   
   const [showCheatWarning, setShowCheatWarning] = useState(false)
   const timerRef = useRef(null)
+  const previewTimerRef = useRef(null)
+  const previewTimeoutRef = useRef(null)
   const selectedRef = useRef(null)
+  const submittingRef = useRef(false)
 
   const fetchNextQuestion = async () => {
     if (!student?.registerNumber) return;
     try {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (previewTimerRef.current) clearInterval(previewTimerRef.current);
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+      submittingRef.current = false;
+
       const res = await fetch(`${getBackendUrl()}/api/quiz/next?registerNumber=${student.registerNumber}`)
       const data = await res.json()
       
+      if (data.totalScore !== undefined) {
+        setCurrentScore(data.totalScore)
+      }
+
       if (!data.quizStarted) {
         setQuizStarted(false)
-        setStatus('Waiting for admin to start the quiz...')
+        if (data.activeQuizNumber) setActiveQuizNumber(data.activeQuizNumber)
+        setStatus(`Waiting for admin to start Quiz ${data.activeQuizNumber || 1}...`)
         return
       }
       
       setQuizStarted(true)
-      
+      if (data.activeQuizNumber) setActiveQuizNumber(data.activeQuizNumber)
+      if (data.answerTimeLimit) setAnswerTimeLimit(data.answerTimeLimit)
+      if (data.previewTimeLimit) setPreviewTimeLimit(data.previewTimeLimit)
+
       if (data.complete) {
         setIsComplete(true)
-        setStatus('Quiz Complete! Check the leaderboard.')
+        setStatus(`Quiz ${data.activeQuizNumber || activeQuizNumber} Complete!`)
         setQuestion(null)
         setProgress(null)
+        setRevealed(null)
         return
       }
 
+      setIsComplete(false)
       setQuestion(data.question)
       questionRef.current = data.question
       setProgress(data.progress || null)
-      setSeconds(10)
+      
+      const qTime = data.answerTimeLimit || 15
+      setSeconds(qTime)
       setSelected(null)
       selectedRef.current = null
       setRevealed(null)
       setStatus('Answer now!')
       
-      // Start local timer
+      // Start answer timer
       if (timerRef.current) clearInterval(timerRef.current)
       timerRef.current = setInterval(() => {
         setSeconds(prev => {
@@ -79,17 +109,18 @@ export default function QuizPage() {
   }
 
   const handleTimeUp = () => {
+    if (submittingRef.current || revealed) return
     submitFinalAnswer(selectedRef.current)
   }
 
   const handleOptionClick = (key) => {
-    if (seconds <= 0 || revealed) return
+    if (seconds <= 0 || revealed || submittingRef.current) return
     setSelected(key)
     selectedRef.current = key
   }
 
   const handleManualSubmit = () => {
-    if (seconds <= 0 || revealed || !selectedRef.current) return
+    if (seconds <= 0 || revealed || submittingRef.current || !selectedRef.current) return
     if (timerRef.current) clearInterval(timerRef.current)
     setSeconds(0)
     submitFinalAnswer(selectedRef.current)
@@ -99,12 +130,13 @@ export default function QuizPage() {
     const currentQ = questionRef.current
     if (!currentQ || !student) return
     
-    // Prevent double submission
-    if (revealed) return
+    if (submittingRef.current || revealed) return
+    submittingRef.current = true
 
+    if (timerRef.current) clearInterval(timerRef.current)
     setStatus('Submitting answer...')
 
-    const timeMs = 10000 // 10s max
+    const timeMs = (answerTimeLimit - Math.max(0, seconds)) * 1000
     
     try {
       const res = await fetch(`${getBackendUrl()}/api/quiz/submit`, {
@@ -121,13 +153,33 @@ export default function QuizPage() {
       
       if (data.success) {
         setRevealed(data)
-        setStatus('Waiting for next question...')
+        if (data.totalScore !== undefined) {
+          setCurrentScore(data.totalScore)
+        }
+        const pTime = data.previewTimeLimit || previewTimeLimit || 5
+        setPreviewSeconds(pTime)
+        setStatus(`Previewing answer (${pTime}s)...`)
         socket.emit('leaderboard:refresh')
         
-        // Wait 4 seconds then fetch next
-        setTimeout(fetchNextQuestion, 4000)
+        // 5-second preview countdown timer
+        if (previewTimerRef.current) clearInterval(previewTimerRef.current)
+        previewTimerRef.current = setInterval(() => {
+          setPreviewSeconds(prev => {
+            if (prev <= 1) {
+              clearInterval(previewTimerRef.current)
+              return 0
+            }
+            return prev - 1
+          })
+        }, 1000)
+
+        // Automatically fetch next question after preview duration
+        if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current)
+        previewTimeoutRef.current = setTimeout(() => {
+          if (previewTimerRef.current) clearInterval(previewTimerRef.current)
+          fetchNextQuestion()
+        }, pTime * 1000)
       } else {
-        // Handle error (e.g., already answered)
         setStatus('Error: ' + (data.error || 'Unknown error'))
         setTimeout(fetchNextQuestion, 2000)
       }
@@ -151,15 +203,20 @@ export default function QuizPage() {
     socket.on('connect', handleJoin)
     if (socket.connected) handleJoin()
     
-    socket.on('quiz:start', () => {
+    socket.on('quiz:start', (payload) => {
       setQuizStarted(true)
+      setIsComplete(false)
+      if (payload?.quizNumber) setActiveQuizNumber(payload.quizNumber)
+      if (payload?.answerTimeLimit) setAnswerTimeLimit(payload.answerTimeLimit)
+      if (payload?.previewTimeLimit) setPreviewTimeLimit(payload.previewTimeLimit)
       fetchNextQuestion()
     })
     
-    socket.on('quiz:stop', () => {
+    socket.on('quiz:stop', (payload) => {
       setQuizStarted(false)
       if (timerRef.current) clearInterval(timerRef.current)
-      setStatus('Quiz stopped by admin.')
+      if (previewTimerRef.current) clearInterval(previewTimerRef.current)
+      setStatus(`Quiz ${payload?.quizNumber || activeQuizNumber} stopped by admin.`)
     })
 
     socket.on('student:kicked', () => {
@@ -197,6 +254,7 @@ export default function QuizPage() {
       socket.off('quiz:stop')
       socket.off('student:kicked')
       if (timerRef.current) clearInterval(timerRef.current)
+      if (previewTimerRef.current) clearInterval(previewTimerRef.current)
       window.removeEventListener('blur', handleBlur)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
@@ -234,26 +292,49 @@ export default function QuizPage() {
 
       <div className="z-10 w-full max-w-md mx-auto flex-1 flex flex-col">
         <div className="glass cyber-glow rounded-none border-x-0 md:border-x md:rounded-3xl md:my-6 flex-1 p-5 md:p-8 space-y-6 flex flex-col">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+          {/* Student Header with Live Total Cumulative Score */}
+          <div className="flex items-center justify-between gap-4 flex-wrap pb-2 border-b border-cyan-500/15">
             <div>
-              <h1 className="text-3xl font-black bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">QUIZ ROOM</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-3xl font-black bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">QUIZ ROOM</h1>
+                <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-black">
+                  QUIZ {activeQuizNumber}
+                </span>
+              </div>
               <p className="text-cyan-200/60 text-xs mt-1 font-semibold">{student?.name} • {connected ? '🟢 Online' : '🔴 Offline'}</p>
             </div>
-            <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-red-500/20 text-red-200 border border-red-400/30 text-xs font-bold hover:bg-red-500/40">Exit</button>
+            
+            <div className="flex items-center gap-2">
+              <div className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-yellow-500/20 to-amber-500/20 border border-yellow-500/40 text-center">
+                <span className="block text-[9px] text-yellow-300/80 font-bold uppercase tracking-widest">Total Score</span>
+                <span className="text-sm font-black text-yellow-300 font-mono">{currentScore} pts</span>
+              </div>
+              <button onClick={logout} className="px-2.5 py-2 rounded-lg bg-red-500/20 text-red-200 border border-red-400/30 text-xs font-bold hover:bg-red-500/40">Exit</button>
+            </div>
           </div>
 
           {!quizStarted ? (
             <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-8 text-center text-cyan-200/70 font-medium">
               <div className="text-4xl mb-4 animate-bounce">⏳</div>
-              Waiting for the admin to start the quiz...
+              <h3 className="text-xl font-bold text-cyan-300 mb-2">Waiting for Admin</h3>
+              <p className="text-sm mb-4">The administrator has not started Quiz {activeQuizNumber} yet. Please wait on this screen...</p>
+              <div className="inline-block px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-mono">
+                Your Current Cumulative Score: <strong>{currentScore} pts</strong>
+              </div>
             </div>
           ) : isComplete ? (
             <div className="rounded-2xl border border-green-500/30 bg-green-500/10 p-8 text-center text-green-300 font-medium">
               <div className="text-5xl mb-4">🎉</div>
-              <h2 className="text-2xl font-black mb-2">Quiz Complete!</h2>
-              <p className="text-green-200/70 text-sm mb-6">You have answered all questions. Check out the leaderboard to see your rank.</p>
+              <h2 className="text-2xl font-black mb-1">Quiz {activeQuizNumber} Complete!</h2>
+              <div className="my-4 p-4 rounded-2xl bg-black/40 border border-green-500/30">
+                <span className="text-xs text-green-200/70 block mb-1 uppercase tracking-widest">Total Cumulative Score</span>
+                <span className="text-4xl font-black text-yellow-300 font-mono">{currentScore} pts</span>
+              </div>
+              <p className="text-green-200/70 text-xs mb-6">
+                Your score carries forward seamlessly into the next quiz! Waiting for the admin to launch Quiz {Number(activeQuizNumber) + 1}...
+              </p>
               <button onClick={() => navigate('/leaderboard')} className="btn-cyber px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-bold rounded-lg text-sm w-full">
-                View Leaderboard
+                View Live Leaderboard
               </button>
             </div>
           ) : !question ? (
@@ -262,28 +343,53 @@ export default function QuizPage() {
             </div>
           ) : (
             <>
-              {/* Premium Live Timer Bar */}
+              {/* Premium Live Timer Bar (15s Answer Timer) */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm text-cyan-200/70">
                   <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
-                    {status}
+                    {revealed ? `Reviewing (${previewSeconds}s remaining)` : status}
                   </span>
-                  <span className={`px-3 py-1 rounded-full font-black text-xs border transition-colors ${seconds > 5 ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-red-500/20 border-red-500/40 text-red-300 animate-pulse'}`}>
-                    {seconds > 0 ? `${seconds}s` : 'Time Expired'}
+                  <span className={`px-3 py-1 rounded-full font-black text-xs border transition-colors ${
+                    revealed 
+                      ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                      : seconds > 5 
+                      ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' 
+                      : 'bg-red-500/20 border-red-500/40 text-red-300 animate-pulse'
+                  }`}>
+                    {revealed ? `Next in ${previewSeconds}s` : seconds > 0 ? `${seconds}s` : 'Time Expired'}
                   </span>
                 </div>
-                <div className="w-full bg-black/40 h-2 rounded-full overflow-hidden border border-cyan-500/20">
-                  <div className={`h-full transition-all duration-1000 linear ${seconds > 3 ? 'bg-gradient-to-r from-cyan-400 to-blue-500' : 'bg-red-500'}`} style={{ width: `${(seconds / 10) * 100}%` }}></div>
+                
+                {/* 15s Timer Bar / 5s Preview Bar */}
+                <div className="w-full bg-black/40 h-2.5 rounded-full overflow-hidden border border-cyan-500/20">
+                  {revealed ? (
+                    <div 
+                      className="h-full bg-gradient-to-r from-blue-400 to-cyan-400 transition-all duration-1000 linear" 
+                      style={{ width: `${(previewSeconds / (previewTimeLimit || 5)) * 100}%` }}
+                    />
+                  ) : (
+                    <div 
+                      className={`h-full transition-all duration-1000 linear ${seconds > 5 ? 'bg-gradient-to-r from-cyan-400 to-blue-500' : 'bg-red-500'}`} 
+                      style={{ width: `${(seconds / (answerTimeLimit || 15)) * 100}%` }}
+                    />
+                  )}
                 </div>
               </div>
 
               <div className="space-y-4">
-                {progress && (
-                  <div className="text-cyan-400 font-bold text-sm tracking-widest uppercase mb-2">
-                    Question {progress.current} of {progress.total}
+                <div className="flex justify-between items-center">
+                  {progress && (
+                    <div className="text-cyan-400 font-bold text-xs tracking-widest uppercase">
+                      Quiz {progress.quizNumber} • Q {progress.current} of {progress.total}
+                    </div>
+                  )}
+                  <div className="text-cyan-300/60 font-mono text-xs">
+                    +{question.points || 10} pts
                   </div>
-                )}
+                </div>
+
                 <div className="text-xl md:text-2xl font-bold text-white leading-relaxed">{question.question}</div>
+                
                 <div className="space-y-3 pt-2">
                   {[
                     ['A', question.optionA],
@@ -321,15 +427,28 @@ export default function QuizPage() {
                   <button
                     onClick={handleManualSubmit}
                     disabled={!selected}
-                    className={`w-full mt-4 py-4 rounded-2xl font-black text-lg tracking-wider transition-all duration-300 ${selected ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/20 active:scale-95' : 'bg-cyan-500/10 text-cyan-500/30 border border-cyan-500/20 cursor-not-allowed'}`}
+                    className={`w-full mt-4 py-4 rounded-2xl font-black text-lg tracking-wider transition-all duration-300 ${selected ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/20 active:scale-95 cursor-pointer' : 'bg-cyan-500/10 text-cyan-500/30 border border-cyan-500/20 cursor-not-allowed'}`}
                   >
                     SUBMIT ANSWER
                   </button>
                 )}
 
+                {/* 5-Second Explanation / Preview Display */}
                 {revealed && (
                   <div className="mt-6 rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-5 text-cyan-100 animate-fade-in-up">
-                    <div className="font-black text-sm text-cyan-400 uppercase tracking-widest mb-1">Explanation</div>
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="font-black text-sm text-cyan-400 uppercase tracking-widest flex items-center gap-2">
+                        <span>{revealed.isCorrect ? '✅ Correct Answer!' : '❌ Incorrect'}</span>
+                        {revealed.isCorrect && (
+                          <span className="px-2 py-0.5 bg-green-500/20 text-green-300 border border-green-500/30 rounded text-xs font-mono font-bold">
+                            +{revealed.pointsAwarded || 10} pts
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs font-mono text-cyan-300/80">
+                        Next in {previewSeconds}s...
+                      </div>
+                    </div>
                     <div className="text-sm leading-relaxed text-cyan-50">{revealed.explanation}</div>
                     {revealed.fact && (
                       <div className="mt-4 pt-3 border-t border-cyan-500/20 text-xs text-cyan-300/80">

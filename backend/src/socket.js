@@ -1,50 +1,83 @@
 module.exports = function(io, prisma){
   const state = {
-    currentQuestionId: null,
-    currentQuestion: null,
-    questionTimer: null,
-    timerSeconds: 15,
     students: {},
     registerToSocket: {}
   };
 
-  io.on('connection', (socket) => {
-    console.log('socket connected', socket.id);
+  // Throttled broadcasts to avoid network congestion with 400+ concurrent clients
+  let lobbyUpdateTimeout = null;
+  const emitLobbyUpdateThrottled = () => {
+    if (lobbyUpdateTimeout) return;
+    lobbyUpdateTimeout = setTimeout(() => {
+      lobbyUpdateTimeout = null;
+      io.emit('lobby:update', { count: Object.keys(state.students).length });
+    }, 400); // at most once every 400ms
+  };
 
+  let leaderboardUpdateTimeout = null;
+  const emitLeaderboardUpdateThrottled = () => {
+    if (leaderboardUpdateTimeout) return;
+    leaderboardUpdateTimeout = setTimeout(async () => {
+      leaderboardUpdateTimeout = null;
+      try {
+        const leaderboard = await prisma.student.findMany({ 
+          orderBy: { score: 'desc' }, 
+          take: 25,
+          select: { id: true, name: true, registerNumber: true, department: true, score: true }
+        });
+        io.emit('leaderboard:update', { leaderboard });
+      } catch (e) {
+        console.error('Leaderboard update error:', e.message);
+      }
+    }, 800); // at most once every 800ms
+  };
+
+  io.on('connection', (socket) => {
     socket.on('student:join', async (payload) => {
       const { registerNumber } = payload || {};
       if(!registerNumber) return;
 
       if (registerNumber !== 'ADMIN') {
-        const student = await prisma.student.findUnique({ where: { registerNumber } }).catch(() => null);
+        const student = await prisma.student.findUnique({ 
+          where: { registerNumber },
+          select: { id: true, name: true }
+        }).catch(() => null);
+
         if (!student) {
-          console.log(`Rejecting join: Student REG:${registerNumber} not found in DB`);
           socket.emit('student:kicked');
           socket.disconnect(true);
           return;
         }
-        await prisma.student.update({ where: { registerNumber }, data: { connected: true } }).catch(() => {});
+
+        // Non-blocking connection status update
+        prisma.student.update({ where: { registerNumber }, data: { connected: true } }).catch(() => {});
       }
 
       state.students[socket.id] = { registerNumber };
       state.registerToSocket[registerNumber] = socket.id;
-      io.emit('lobby:update', { count: Object.keys(state.students).length });
-
-      // For individual flow, we don't start a question on join anymore.
-      // The client will fetch /api/quiz/next if the quiz is started.
+      emitLobbyUpdateThrottled();
     });
 
-    socket.on('admin:startQuiz', () => {
-      // Assuming authorization is handled (admin panel restriction)
+    socket.on('admin:startQuiz', (payload) => {
+      const { quizNumber } = payload || {};
       const { globalState } = require('./routes/quiz');
+      if (quizNumber && Number(quizNumber) > 0) {
+        globalState.activeQuizNumber = Number(quizNumber);
+      }
       globalState.quizStarted = true;
-      io.emit('quiz:start');
+      io.emit('quiz:start', {
+        quizNumber: globalState.activeQuizNumber,
+        answerTimeLimit: globalState.answerTimeLimit,
+        previewTimeLimit: globalState.previewTimeLimit
+      });
     });
 
     socket.on('admin:stopQuiz', () => {
       const { globalState } = require('./routes/quiz');
       globalState.quizStarted = false;
-      io.emit('quiz:stop');
+      io.emit('quiz:stop', {
+        quizNumber: globalState.activeQuizNumber
+      });
     });
 
     socket.on('admin:hardReset', () => {
@@ -60,7 +93,10 @@ module.exports = function(io, prisma){
     socket.on('student:cheat_alert', async (payload) => {
       const { registerNumber, action } = payload || {};
       if (!registerNumber) return;
-      const student = await prisma.student.findUnique({ where: { registerNumber } });
+      const student = await prisma.student.findUnique({ 
+        where: { registerNumber },
+        select: { registerNumber: true, name: true }
+      });
       if (student) {
         io.emit('admin:cheat_alert', { 
           registerNumber: student.registerNumber, 
@@ -71,14 +107,8 @@ module.exports = function(io, prisma){
       }
     });
 
-    // We can also poll leaderboard or just update it when an answer is scored in HTTP route.
-    // Let's add a listener that the HTTP route can trigger, but since HTTP and Socket are separate,
-    // the HTTP route won't easily emit without `io`.
-    // Alternatively, clients can poll, OR we can attach io to app.
-    // For now, we will add an event to refresh leaderboard.
-    socket.on('leaderboard:refresh', async () => {
-      const leaderboard = await prisma.student.findMany({ orderBy: { score: 'desc' }, take: 20 });
-      io.emit('leaderboard:update', { leaderboard });
+    socket.on('leaderboard:refresh', () => {
+      emitLeaderboardUpdateThrottled();
     });
 
     socket.on('admin:removeParticipant', async (payload) => {
@@ -100,20 +130,19 @@ module.exports = function(io, prisma){
       }
 
       delete state.registerToSocket[registerNumber];
-      io.emit('lobby:update', { count: Object.keys(state.students).length });
-      const leaderboard = await prisma.student.findMany({ orderBy: { score: 'desc' }, take: 20 });
-      io.emit('leaderboard:update', { leaderboard });
+      delete state.students[targetSocketId];
+      emitLobbyUpdateThrottled();
+      emitLeaderboardUpdateThrottled();
     });
 
-    socket.on('disconnect', async ()=>{
-      console.log('disconnect', socket.id);
+    socket.on('disconnect', () => {
       const s = state.students[socket.id];
       if(s && s.registerNumber){
-        await prisma.student.update({ where: { registerNumber: s.registerNumber }, data: { connected: false }}).catch(()=>{});
+        prisma.student.update({ where: { registerNumber: s.registerNumber }, data: { connected: false }}).catch(()=>{});
+        delete state.registerToSocket[s.registerNumber];
       }
       delete state.students[socket.id];
-      if (s && s.registerNumber) delete state.registerToSocket[s.registerNumber];
-      io.emit('lobby:update', { count: Object.keys(state.students).length });
+      emitLobbyUpdateThrottled();
     });
   });
 };

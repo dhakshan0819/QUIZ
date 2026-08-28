@@ -5,7 +5,9 @@ const router = express.Router();
 router.post('/admin/login', (req, res)=>{
   const { username, password } = req.body || {};
   if(!username || !password) return res.status(400).json({ error: 'username/password required' });
-  if(username === process.env.ADMIN_USER && password === process.env.ADMIN_PASS){
+  const expectedUser = process.env.ADMIN_USER || 'admin';
+  const expectedPass = process.env.ADMIN_PASS || 'password';
+  if(username === expectedUser && password === expectedPass){
     const token = jwt.sign({ role: 'admin', user: username }, process.env.ADMIN_SECRET || 'secret', { expiresIn: '8h' });
     return res.json({ token });
   }

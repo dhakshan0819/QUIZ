@@ -6,6 +6,10 @@ const bodyParser = require('body-parser');
 const { Server } = require('socket.io');
 const prisma = require('./db');
 const socketHandler = require('./socket');
+const submissionQueue = require('./utils/submissionQueue');
+
+// Initialize in-memory submission queue & cache
+submissionQueue.init(prisma);
 
 const app = express();
 app.use(cors());

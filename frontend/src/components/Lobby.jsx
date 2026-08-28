@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { io } from 'socket.io-client'
-import { getBackendUrl } from '../utils/config'
+import socket from '../utils/socket'
 
-const socket = io(getBackendUrl());
 
 export default function Lobby(){
   const [count, setCount] = useState(0);

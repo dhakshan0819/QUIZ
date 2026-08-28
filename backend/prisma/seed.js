@@ -10,12 +10,17 @@ async function main(){
 
   console.log('Seeding questions:', questions.length);
 
-  for(const q of questions){
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    // Partition 10 questions per quiz by default (Quiz 1, Quiz 2, Quiz 3, etc.)
+    const quizNumber = q.quizNumber || (Math.floor(i / 10) + 1);
+
     await prisma.question.upsert({
-      where: { id: q.id || 0 },
+      where: { id: q.id || (i + 1) },
       update: {
-        category: q.category,
-        difficulty: q.difficulty,
+        quizNumber,
+        category: q.category || 'General',
+        difficulty: q.difficulty || 'Medium',
         question: q.question,
         optionA: q.optionA,
         optionB: q.optionB,
@@ -28,8 +33,9 @@ async function main(){
         points: q.points || 10
       },
       create: {
-        category: q.category,
-        difficulty: q.difficulty,
+        quizNumber,
+        category: q.category || 'General',
+        difficulty: q.difficulty || 'Medium',
         question: q.question,
         optionA: q.optionA,
         optionB: q.optionB,

@@ -22,6 +22,7 @@ model Student {
 
 model Question {
   id           Int     @id @default(autoincrement())
+  quizNumber   Int     @default(1)
   category     String
   difficulty   String
   question     String
@@ -49,4 +50,6 @@ model Answer {
   correct    Boolean
   timeMs     Int?
   scored     Boolean  @default(false)
+
+  @@unique([studentId, questionId])
 }
