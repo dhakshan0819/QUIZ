@@ -95,7 +95,7 @@ router.get('/certificate/:registerNumber', async (req, res) => {
       student.department,
       student.score,
       rank,
-      'Cyber Quiz Arena College'
+      'SIH Quiz Arena'
     );
 
     res.header('Content-Type', 'application/pdf');

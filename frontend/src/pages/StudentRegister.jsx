@@ -136,7 +136,7 @@ export default function StudentRegister(){
           {/* Info card */}
           <div className="glass p-4 rounded-lg mt-6 text-center">
             <p className="text-cyan-200/60 text-sm">
-              <span className="text-cyan-400 font-semibold">40+ Questions</span> across cyber security domains
+              <span className="text-cyan-400 font-semibold">Multiple Rounds & Live Challenges</span> in SIH Arena
             </p>
           </div>
         </div>

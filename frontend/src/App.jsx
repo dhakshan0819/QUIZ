@@ -64,7 +64,7 @@ export default function App(){
           <div className="text-center mb-12">
             <div className="mb-6 inline-block">
               <div className="text-6xl md:text-7xl font-black bg-gradient-to-r from-cyan-400 via-blue-400 to-cyan-300 bg-clip-text text-transparent animate-slide-in">
-                CYBER QUIZ
+                SIH QUIZ
               </div>
               <div className="text-2xl md:text-3xl font-bold text-cyan-300/80 mt-2 animate-slide-in" style={{ animationDelay: '0.2s' }}>
                 ARENA
@@ -72,7 +72,7 @@ export default function App(){
             </div>
             <div className="h-1 w-24 bg-gradient-to-r from-cyan-500 to-blue-500 mx-auto mb-6 animate-slide-in" style={{ animationDelay: '0.4s' }}></div>
             <p className="text-cyan-200/70 text-lg md:text-xl leading-relaxed animate-fade-in-up" style={{ animationDelay: '0.6s' }}>
-              LAN-hosted Cyber Security Quiz Platform<br />
+              SIH Quiz Platform<br />
               Real-time competition • Live scoring • Professional certificates
             </p>
           </div>
@@ -86,7 +86,7 @@ export default function App(){
                   <div className="text-4xl mb-4 group-hover:scale-110 transition-transform duration-300">🎓</div>
                   <h3 className="text-2xl font-bold text-cyan-300 mb-3">Student</h3>
                   <p className="text-cyan-200/70 text-sm leading-relaxed">
-                    Register and join the quiz competition. Answer cyber security questions and climb the leaderboard.
+                    Register and join the quiz competition. Answer questions and climb the leaderboard.
                   </p>
                 </div>
                 <div className="mt-6 inline-flex items-center text-cyan-400 font-semibold group-hover:translate-x-2 transition-transform">
@@ -102,7 +102,7 @@ export default function App(){
                   <div className="text-4xl mb-4 group-hover:scale-110 transition-transform duration-300">🏆</div>
                   <h3 className="text-2xl font-bold text-yellow-300 mb-3">Leaderboard</h3>
                   <p className="text-cyan-200/70 text-sm leading-relaxed">
-                    View the live rankings and track the top hackers in real-time.
+                    View the live rankings and track the top participants in real-time.
                   </p>
                 </div>
                 <div className="mt-6 inline-flex items-center text-yellow-400 font-semibold group-hover:translate-x-2 transition-transform">

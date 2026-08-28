@@ -1,8 +1,8 @@
 {
-  "name": "cyber-quiz-arena",
+  "name": "sih-quiz-arena",
   "version": "1.0.0",
   "private": true,
-  "description": "LAN-hosted Cyber Security Quiz Platform",
+  "description": "SIH Quiz Arena Platform",
   "scripts": {
     "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,magenta\" \"npm run backend\" \"npm run frontend\"",
     "frontend": "npm --prefix frontend run dev",
