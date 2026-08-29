@@ -63,12 +63,24 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
+const primaryPort = Number(process.env.PORT) || 8080;
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
 socketHandler(io, prisma);
 
-const port = Number(process.env.PORT) || 8080;
-server.listen(port, '0.0.0.0', () => {
-  console.log(`Backend listening on 0.0.0.0:${port}`);
+server.listen(primaryPort, '0.0.0.0', () => {
+  console.log(`Backend listening on 0.0.0.0:${primaryPort}`);
+});
+
+// Also bind alternate ports (8080, 4000) so Railway proxy never 502s
+[8080, 4000].forEach((p) => {
+  if (p !== primaryPort) {
+    try {
+      const extraServer = http.createServer(app);
+      extraServer.listen(p, '0.0.0.0', () => {
+        console.log(`Alternate port active on 0.0.0.0:${p}`);
+      });
+    } catch (e) {}
+  }
 });
