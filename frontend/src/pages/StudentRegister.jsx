@@ -7,12 +7,13 @@ const ParticleBackground = () => {
   const [particles, setParticles] = useState([])
   
   useEffect(() => {
+    const sizes = ['small', 'medium', 'large']
     const newParticles = Array.from({ length: 12 }).map((_, i) => ({
       id: i,
-      size: ['small', 'medium', 'large'][Math.floor(Math.random() * 3)],
-      left: Math.random() * 100,
-      top: Math.random() * 100,
-      delay: Math.random() * 2,
+      size: sizes[i % 3],
+      left: (i * 23 + 7) % 100,
+      top: (i * 37 + 13) % 100,
+      delay: (i * 0.3) % 2,
     }))
     setParticles(newParticles)
   }, [])

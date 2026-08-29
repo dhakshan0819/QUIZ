@@ -439,11 +439,12 @@ router.get('/next', async (req, res) => {
     });
   }
 
-  // 2. Count how many questions in THIS active quiz the student has answered
-  const answeredInThisQuiz = quizQuestions.filter(q => submissionQueue.hasAnswered(student.id, q.id));
-  const answeredCount = answeredInThisQuiz.length;
+  // 2. Global synchronized question step (defaults to 1 for Question #1)
+  const currentStep = (globalState.currentQuestionIndex && globalState.currentQuestionIndex > 0)
+    ? globalState.currentQuestionIndex
+    : 1;
 
-  if (answeredCount >= quizQuestions.length) {
+  if (currentStep > quizQuestions.length) {
     return res.json({ 
       quizStarted: true, 
       complete: true, 
@@ -454,18 +455,12 @@ router.get('/next', async (req, res) => {
     });
   }
 
-  // 3. Determine exact target question index (deterministic 0, 1, 2... for all users)
-  let targetIndex = answeredCount;
-  if (globalState.currentQuestionIndex && globalState.currentQuestionIndex > 0) {
-    targetIndex = Math.min(quizQuestions.length - 1, globalState.currentQuestionIndex - 1);
-  }
-
-  const nextQuestion = quizQuestions[targetIndex] || quizQuestions[0];
+  // 3. Target index is identical for ALL devices globally (0-indexed: 0 for Q1, 1 for Q2...)
+  const targetIndex = Math.min(quizQuestions.length - 1, Math.max(0, currentStep - 1));
+  const nextQuestion = quizQuestions[targetIndex];
 
   const { correct, explanation, fact, ...safeQuestion } = nextQuestion;
-
   const totalQuestions = quizQuestions.length;
-  const currentQuestionNumber = Math.min(totalQuestions, answeredCount + 1);
 
   res.json({ 
     quizStarted: true, 
@@ -476,7 +471,7 @@ router.get('/next', async (req, res) => {
     question: safeQuestion,
     totalScore: currentLiveScore,
     progress: { 
-      current: currentQuestionNumber, 
+      current: currentStep, 
       total: totalQuestions, 
       quizNumber: currentQuizNum 
     }
