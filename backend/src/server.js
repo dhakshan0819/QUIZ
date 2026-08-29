@@ -6,12 +6,15 @@ const bodyParser = require('body-parser');
 const { Server } = require('socket.io');
 const prisma = require('./db');
 const socketHandler = require('./socket');
-const { execSync } = require('child_process');
+const submissionQueue = require('./utils/submissionQueue');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 
 async function initDatabaseAndQueue() {
   try {
     console.log('Ensuring database schema is synced...');
-    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
+    await execAsync('npx prisma db push --skip-generate --accept-data-loss');
     console.log('Database tables verified.');
 
     const qCount = await prisma.question.count().catch(() => 0);
@@ -25,7 +28,9 @@ async function initDatabaseAndQueue() {
   }
 
   // Initialize in-memory submission queue & cache
-  submissionQueue.init(prisma);
+  if (submissionQueue && typeof submissionQueue.init === 'function') {
+    submissionQueue.init(prisma);
+  }
 }
 
 initDatabaseAndQueue();
