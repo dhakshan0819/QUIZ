@@ -13,23 +13,12 @@ const execAsync = promisify(exec);
 
 async function initDatabaseAndQueue() {
   try {
-    console.log('Ensuring database schema is synced...');
-    await execAsync('npx prisma db push --skip-generate --accept-data-loss');
-    console.log('Database tables verified.');
-
-    const qCount = await prisma.question.count().catch(() => 0);
-    if (qCount === 0) {
-      console.log('Database empty, seeding sample questions...');
-      const seed = require('../prisma/seed');
-      if (typeof seed === 'function') await seed();
+    if (submissionQueue && typeof submissionQueue.init === 'function') {
+      await submissionQueue.init(prisma);
+      console.log('Submission queue and DB cache initialized.');
     }
   } catch (err) {
-    console.warn('DB initialization note:', err.message);
-  }
-
-  // Initialize in-memory submission queue & cache
-  if (submissionQueue && typeof submissionQueue.init === 'function') {
-    submissionQueue.init(prisma);
+    console.warn('Queue initialization note:', err.message);
   }
 }
 
