@@ -6,10 +6,29 @@ const bodyParser = require('body-parser');
 const { Server } = require('socket.io');
 const prisma = require('./db');
 const socketHandler = require('./socket');
-const submissionQueue = require('./utils/submissionQueue');
+const { execSync } = require('child_process');
 
-// Initialize in-memory submission queue & cache
-submissionQueue.init(prisma);
+async function initDatabaseAndQueue() {
+  try {
+    console.log('Ensuring database schema is synced...');
+    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
+    console.log('Database tables verified.');
+
+    const qCount = await prisma.question.count().catch(() => 0);
+    if (qCount === 0) {
+      console.log('Database empty, seeding sample questions...');
+      const seed = require('../prisma/seed');
+      if (typeof seed === 'function') await seed();
+    }
+  } catch (err) {
+    console.warn('DB initialization note:', err.message);
+  }
+
+  // Initialize in-memory submission queue & cache
+  submissionQueue.init(prisma);
+}
+
+initDatabaseAndQueue();
 
 const app = express();
 app.use(cors());
