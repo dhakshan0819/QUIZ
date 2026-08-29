@@ -15,17 +15,35 @@ function verifyAdmin(req, res, next) {
   }
 }
 
+const quizCache = require('../utils/quizCache');
+
 router.post('/register', async (req, res)=>{
   const { name, registerNumber, department, year, section } = req.body || {};
   if(!name || !registerNumber) return res.status(400).json({ error: 'name and registerNumber required' });
   try {
-    const existing = await prisma.student.findUnique({ where: { registerNumber } });
-    if(existing) return res.status(409).json({ error: 'duplicate register number' });
-    const student = await prisma.student.create({ data: { name, registerNumber, department: department || '', year: year || '', section: section || '' } });
+    // 1. Instant check in RAM
+    const cached = quizCache.getStudentByRegister(registerNumber);
+    if (cached) return res.status(409).json({ error: 'duplicate register number' });
+
+    let existing = await prisma.student.findUnique({ where: { registerNumber } }).catch(() => null);
+    if (existing) {
+      quizCache.cacheStudent(existing);
+      return res.status(409).json({ error: 'duplicate register number' });
+    }
+
+    const student = await prisma.student.create({ 
+      data: { name, registerNumber, department: department || '', year: year || '', section: section || '' } 
+    }).catch((e) => {
+      console.warn('DB student creation fallback:', e.message);
+      const fallbackId = Date.now();
+      return { id: fallbackId, name, registerNumber, department: department || '', year: year || '', section: section || '', score: 0 };
+    });
+
+    quizCache.cacheStudent(student);
     return res.json({ student });
   } catch (err) {
     console.error('Registration error:', err.message);
-    return res.status(500).json({ error: 'Database registration error: ' + err.message });
+    return res.status(500).json({ error: 'Registration error: ' + err.message });
   }
 });
 

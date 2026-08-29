@@ -14,12 +14,13 @@ const { Server } = require('socket.io');
 const prisma = require('./db');
 const socketHandler = require('./socket');
 const submissionQueue = require('./utils/submissionQueue');
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const execAsync = promisify(exec);
+const quizCache = require('./utils/quizCache');
 
 async function initDatabaseAndQueue() {
   try {
+    if (quizCache && typeof quizCache.init === 'function') {
+      await quizCache.init(prisma);
+    }
     if (submissionQueue && typeof submissionQueue.init === 'function') {
       await submissionQueue.init(prisma);
       console.log('Submission queue and DB cache initialized.');
