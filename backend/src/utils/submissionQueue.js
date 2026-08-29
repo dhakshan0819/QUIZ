@@ -3,6 +3,8 @@ const queue = [];
 const answeredSet = new Set();
 const studentScores = new Map();
 const answeredCache = new Map(); // key -> { isCorrect }
+const studentRegMap = new Map(); // registerNumber -> student object
+
 let flushInterval = null;
 let isFlushing = false;
 
@@ -20,13 +22,13 @@ async function init(prisma) {
       answeredCache.set(key, { isCorrect: a.correct });
     }
 
-    // 2. Populate in-memory student scores
-    const students = await prisma.student.findMany({
-      select: { id: true, score: true }
-    });
+    // 2. Populate in-memory student scores and student lookup map
+    const students = await prisma.student.findMany();
     for (const s of students) {
       studentScores.set(s.id, s.score || 0);
+      studentRegMap.set(s.registerNumber, s);
     }
+    console.log(`SubmissionQueue initialized: ${students.length} students, ${answers.length} answers cached.`);
   } catch (err) {
     console.error('Failed to initialize submission queue cache from DB:', err.message);
   }
@@ -36,13 +38,44 @@ async function init(prisma) {
   }
 }
 
+function cacheStudent(student) {
+  if (!student) return;
+  studentRegMap.set(student.registerNumber, student);
+  studentScores.set(student.id, student.score || 0);
+}
+
+function removeStudentFromCache(registerNumber) {
+  const student = studentRegMap.get(registerNumber);
+  if (student) {
+    studentScores.delete(student.id);
+    studentRegMap.delete(registerNumber);
+  }
+}
+
+async function getStudent(registerNumber) {
+  if (!registerNumber) return null;
+  const regKey = String(registerNumber).trim();
+  if (studentRegMap.has(regKey)) {
+    return studentRegMap.get(regKey);
+  }
+  if (!prismaClient) return null;
+  const student = await prismaClient.student.findUnique({ where: { registerNumber: regKey } });
+  if (student) {
+    cacheStudent(student);
+  }
+  return student;
+}
+
+function hasAnswered(studentId, questionId) {
+  return answeredSet.has(`${studentId}_${questionId}`);
+}
+
 /**
  * Handle instant submission in-memory (< 1ms)
  */
 function handleSubmission({ student, question, option, timeMs }) {
   const key = `${student.id}_${question.id}`;
 
-  // If student score is not yet cached in memory, initialize it
   if (!studentScores.has(student.id)) {
     studentScores.set(student.id, student.score || 0);
   }
@@ -58,8 +91,10 @@ function handleSubmission({ student, question, option, timeMs }) {
     };
   }
 
-  // 2. Mark as answered immediately in memory
-  const isCorrect = question.correct === option;
+  // 2. Mark as answered immediately in memory (Case-insensitive check)
+  const normCorrect = String(question.correct || '').trim().toUpperCase();
+  const normOption = String(option || '').trim().toUpperCase();
+  const isCorrect = normCorrect === normOption;
   const points = isCorrect ? (question.points || 10) : 0;
 
   answeredSet.add(key);
@@ -73,7 +108,7 @@ function handleSubmission({ student, question, option, timeMs }) {
   queue.push({
     studentId: student.id,
     questionId: question.id,
-    option,
+    option: String(option || 'TIMEOUT').trim(),
     correct: isCorrect,
     timeMs: timeMs || 0,
     points
@@ -106,13 +141,13 @@ async function flushBatch() {
       scored: true
     }));
 
-    // 1. Bulk insert all answers in one batch
+    // 1. Bulk insert all answers in one batch with duplicate skipping
     try {
       await prismaClient.answer.createMany({
-        data: answerRows
+        data: answerRows,
+        skipDuplicates: true
       });
     } catch {
-      // Fallback for individual rows if any constraint conflict
       for (const row of answerRows) {
         await prismaClient.answer.create({ data: row }).catch(() => {});
       }
@@ -134,7 +169,7 @@ async function flushBatch() {
       }).catch(() => {});
     }
   } catch (err) {
-    console.error('Batch submission flush error:', err);
+    console.error('Batch submission flush error:', err.message);
   } finally {
     isFlushing = false;
   }
@@ -145,6 +180,7 @@ function clearCache() {
   answeredSet.clear();
   answeredCache.clear();
   studentScores.clear();
+  studentRegMap.clear();
 }
 
 function getStudentScore(studentId, defaultScore = 0) {
@@ -153,6 +189,10 @@ function getStudentScore(studentId, defaultScore = 0) {
 
 module.exports = {
   init,
+  cacheStudent,
+  removeStudentFromCache,
+  getStudent,
+  hasAnswered,
   handleSubmission,
   flushBatch,
   clearCache,

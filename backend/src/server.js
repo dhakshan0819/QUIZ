@@ -6,17 +6,16 @@ process.on('uncaughtException', (error) => {
 });
 
 require('dotenv').config();
-const express = require('express');
 const http = require('http');
+http.globalAgent.maxSockets = Infinity;
+
+const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const { Server } = require('socket.io');
 const prisma = require('./db');
 const socketHandler = require('./socket');
 const submissionQueue = require('./utils/submissionQueue');
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const execAsync = promisify(exec);
 
 async function initDatabaseAndQueue() {
   try {
@@ -33,7 +32,8 @@ initDatabaseAndQueue();
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/students', require('./routes/students'));
@@ -42,11 +42,11 @@ app.use('/api/qr', require('./routes/qr'));
 app.use('/api/quiz', require('./routes/quiz'));
 
 app.get('/api/questions', async (req, res) => {
-  const questions = await prisma.question.findMany();
+  const questions = await prisma.question.findMany({ orderBy: { id: 'asc' } });
   res.json({ questions });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => res.json({ ok: true, status: 'healthy', timestamp: new Date().toISOString() }));
 
 const path = require('path');
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
@@ -63,16 +63,25 @@ if (fs.existsSync(frontendDist)) {
 }
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+server.maxConnections = 1000;
+
+const io = new Server(server, {
+  cors: { origin: '*' },
+  pingTimeout: 30000,
+  pingInterval: 10000,
+  maxHttpBufferSize: 1e6,
+  transports: ['websocket', 'polling']
+});
 
 socketHandler(io, prisma);
 
 const primaryPort = Number(process.env.PORT) || 8080;
-server.listen(primaryPort, '0.0.0.0', () => console.log('Backend listening on 0.0.0.0:' + primaryPort));
+server.listen(primaryPort, '0.0.0.0', () => console.log('Backend server running on 0.0.0.0:' + primaryPort));
 
 if (primaryPort !== 4000) {
   try {
     const backupServer = http.createServer(app);
+    backupServer.maxConnections = 1000;
     io.attach(backupServer);
     backupServer.listen(4000, '0.0.0.0', () => console.log('Backup listener active on 0.0.0.0:4000'));
   } catch (e) {

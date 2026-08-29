@@ -13,6 +13,50 @@ const globalState = {
   previewTimeLimit: 5   // 5 seconds
 };
 
+// In-memory question cache by quiz number for zero-latency response under high load
+let questionCacheByQuiz = null;
+
+async function loadQuestionCache() {
+  try {
+    const questions = await prisma.question.findMany({ orderBy: { id: 'asc' } });
+    const cache = {};
+    for (const q of questions) {
+      const qNum = q.quizNumber || 1;
+      if (!cache[qNum]) cache[qNum] = [];
+      cache[qNum].push(q);
+    }
+    questionCacheByQuiz = cache;
+    return cache;
+  } catch (err) {
+    console.error('Failed to load question cache:', err.message);
+    return questionCacheByQuiz || {};
+  }
+}
+
+async function getQuestionsForQuiz(quizNum) {
+  if (!questionCacheByQuiz) {
+    await loadQuestionCache();
+  }
+  return (questionCacheByQuiz && questionCacheByQuiz[quizNum]) ? questionCacheByQuiz[quizNum] : [];
+}
+
+async function findQuestionById(questionId) {
+  if (!questionCacheByQuiz) {
+    await loadQuestionCache();
+  }
+  if (questionCacheByQuiz) {
+    for (const qList of Object.values(questionCacheByQuiz)) {
+      const found = qList.find(q => q.id === questionId);
+      if (found) return found;
+    }
+  }
+  return await prisma.question.findUnique({ where: { id: Number(questionId) } });
+}
+
+function invalidateQuestionCache() {
+  questionCacheByQuiz = null;
+}
+
 // Get global quiz status and active configuration
 router.get('/status', (req, res) => {
   res.json({
@@ -167,6 +211,7 @@ router.delete('/questions/:id', async (req, res) => {
     const id = Number(req.params.id);
     await prisma.answer.deleteMany({ where: { questionId: id } });
     await prisma.question.delete({ where: { id } });
+    invalidateQuestionCache();
     res.json({ success: true, message: 'Question deleted.' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete question' });
@@ -182,7 +227,6 @@ router.post('/upload', async (req, res) => {
       return res.status(400).json({ error: 'No questions provided or invalid format. Please provide a JSON array.' });
     }
 
-    // Validate and sanitize each question
     const validQuestions = [];
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
@@ -193,7 +237,7 @@ router.post('/upload', async (req, res) => {
       }
 
       validQuestions.push({
-        category: String(q.category || 'Cyber Security').trim(),
+        category: String(q.category || 'General').trim(),
         difficulty: String(q.difficulty || 'Medium').trim(),
         question: String(q.question).trim(),
         optionA: String(q.optionA).trim(),
@@ -236,7 +280,6 @@ router.post('/upload', async (req, res) => {
         q.quizNumber = Math.floor(idx / perQuiz) + 1;
       });
     } else {
-      // Default: check if questions have quizNumber, otherwise partition by 10
       const perQuiz = 10;
       validQuestions.forEach((q, idx) => {
         q.quizNumber = q.quizNumber || (Math.floor(idx / perQuiz) + 1);
@@ -268,6 +311,9 @@ router.post('/upload', async (req, res) => {
       });
     }
 
+    invalidateQuestionCache();
+    await loadQuestionCache();
+
     const allQ = await prisma.question.findMany({ select: { quizNumber: true } });
     const counts = {};
     for (const q of allQ) {
@@ -286,7 +332,7 @@ router.post('/upload', async (req, res) => {
   }
 });
 
-// Repartition existing questions across N quizzes or X questions/quiz
+// Repartition existing questions across N quizzes
 router.post('/repartition', async (req, res) => {
   try {
     const { partitionCount, questionsPerQuiz } = req.body || {};
@@ -310,6 +356,9 @@ router.post('/repartition', async (req, res) => {
       });
     }
 
+    invalidateQuestionCache();
+    await loadQuestionCache();
+
     const allQ = await prisma.question.findMany({ select: { quizNumber: true } });
     const counts = {};
     for (const q of allQ) {
@@ -331,6 +380,7 @@ router.post('/hard-reset', async (req, res) => {
   globalState.quizStarted = false;
   try {
     submissionQueue.clearCache();
+    invalidateQuestionCache();
     await prisma.answer.deleteMany({});
     await prisma.student.deleteMany({});
     res.json({ success: true, message: 'Database wiped successfully.' });
@@ -339,7 +389,7 @@ router.post('/hard-reset', async (req, res) => {
   }
 });
 
-// Get the next unanswered question for a student in the ACTIVE QUIZ
+// Get the next unanswered question for a student in the ACTIVE QUIZ (Fast, in-memory filtering)
 router.get('/next', async (req, res) => {
   const { registerNumber } = req.query;
   
@@ -364,7 +414,7 @@ router.get('/next', async (req, res) => {
     });
   }
 
-  const student = await prisma.student.findUnique({ where: { registerNumber } });
+  const student = await submissionQueue.getStudent(registerNumber);
   if (!student) {
     return res.status(404).json({ error: 'student not found' });
   }
@@ -372,13 +422,9 @@ router.get('/next', async (req, res) => {
   const currentQuizNum = globalState.activeQuizNumber;
   const currentLiveScore = submissionQueue.getStudentScore(student.id, student.score);
 
-  // Find all questions belonging to current active quiz
-  const quizQuestions = await prisma.question.findMany({
-    where: { quizNumber: currentQuizNum },
-    select: { id: true }
-  });
+  const quizQuestions = await getQuestionsForQuiz(currentQuizNum);
 
-  if (quizQuestions.length === 0) {
+  if (!quizQuestions || quizQuestions.length === 0) {
     return res.json({ 
       quizStarted: true, 
       complete: true, 
@@ -387,44 +433,29 @@ router.get('/next', async (req, res) => {
     });
   }
 
-  const quizQuestionIds = quizQuestions.map(q => q.id);
+  // Filter available questions using in-memory answer cache
+  const availableQuestions = quizQuestions.filter(q => !submissionQueue.hasAnswered(student.id, q.id));
+  const answeredCount = quizQuestions.length - availableQuestions.length;
 
-  // Find all question IDs in this quiz this student has already answered
-  const answers = await prisma.answer.findMany({
-    where: { 
-      studentId: student.id,
-      questionId: { in: quizQuestionIds }
-    },
-    select: { questionId: true }
-  });
-  
-  const uniqueAnsweredQuestionIds = [...new Set(answers.map(a => a.questionId))];
-  const availableQuestionIds = quizQuestionIds.filter(id => !uniqueAnsweredQuestionIds.includes(id));
-
-  if (availableQuestionIds.length === 0) {
+  if (availableQuestions.length === 0) {
     return res.json({ 
       quizStarted: true, 
       complete: true, 
       activeQuizNumber: currentQuizNum,
-      totalQuestions: quizQuestionIds.length,
-      answeredCount: uniqueAnsweredQuestionIds.length,
+      totalQuestions: quizQuestions.length,
+      answeredCount,
       totalScore: currentLiveScore
     });
   }
 
-  // Pick a random question ID from available questions in this quiz
-  const randomIndex = Math.floor(Math.random() * availableQuestionIds.length);
-  const randomQuestionId = availableQuestionIds[randomIndex];
+  // Pick a random question from available questions
+  const randomIndex = Math.floor(Math.random() * availableQuestions.length);
+  const nextQuestion = availableQuestions[randomIndex];
 
-  const nextQuestion = await prisma.question.findUnique({
-    where: { id: randomQuestionId }
-  });
-
-  // Remove the correct answer and explanation before sending to client
   const { correct, explanation, fact, ...safeQuestion } = nextQuestion;
 
-  const totalQuestions = quizQuestionIds.length;
-  const currentQuestionNumber = Math.min(totalQuestions, uniqueAnsweredQuestionIds.length + 1);
+  const totalQuestions = quizQuestions.length;
+  const currentQuestionNumber = Math.min(totalQuestions, answeredCount + 1);
 
   res.json({ 
     quizStarted: true, 
@@ -444,7 +475,7 @@ router.get('/next', async (req, res) => {
 
 // Submit an answer (Ultra-fast in-memory processing with batch queueing)
 router.post('/submit', async (req, res) => {
-  const { registerNumber, questionId, option, timeMs } = req.body;
+  const { registerNumber, questionId, option, timeMs } = req.body || {};
   
   if (!globalState.quizStarted) {
     return res.status(400).json({ error: 'Quiz has not started' });
@@ -463,10 +494,10 @@ router.post('/submit', async (req, res) => {
     });
   }
 
-  const student = await prisma.student.findUnique({ where: { registerNumber } });
+  const student = await submissionQueue.getStudent(registerNumber);
   if (!student) return res.status(404).json({ error: 'Student not found' });
 
-  const question = await prisma.question.findUnique({ where: { id: questionId } });
+  const question = await findQuestionById(questionId);
   if (!question) return res.status(404).json({ error: 'Question not found' });
 
   // Process submission instantly in-memory (< 1ms) and queue for batch write
@@ -477,7 +508,6 @@ router.post('/submit', async (req, res) => {
     timeMs
   });
 
-  // Return immediate response with answer preview and live updated score
   return res.json({
     success: true,
     correct: question.correct,
