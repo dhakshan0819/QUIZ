@@ -183,6 +183,11 @@ function clearCache() {
   studentRegMap.clear();
 }
 
+function clearAnsweredCache() {
+  answeredSet.clear();
+  answeredCache.clear();
+}
+
 function getStudentScore(studentId, defaultScore = 0) {
   return studentScores.get(studentId) ?? defaultScore;
 }
@@ -196,5 +201,6 @@ module.exports = {
   handleSubmission,
   flushBatch,
   clearCache,
+  clearAnsweredCache,
   getStudentScore
 };

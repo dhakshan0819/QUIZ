@@ -94,6 +94,11 @@ router.post('/start', async (req, res) => {
   globalState.quizStarted = true;
   globalState.currentQuestionIndex = 1;
   globalState.showLeaderboardOverlay = false;
+  
+  // Clear answered cache so all students start clean at Question 1 of this quiz round
+  if (submissionQueue.clearAnsweredCache) {
+    submissionQueue.clearAnsweredCache();
+  }
   res.json({ 
     success: true, 
     quizStarted: true, 
