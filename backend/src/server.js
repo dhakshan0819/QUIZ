@@ -47,5 +47,5 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 socketHandler(io, prisma);
 
-const port = process.env.PORT || 4000;
-server.listen(port, () => console.log('Backend listening on', port));
+const port = Number(process.env.PORT) || 4000;
+server.listen(port, '0.0.0.0', () => console.log('Backend listening on 0.0.0.0:' + port));
