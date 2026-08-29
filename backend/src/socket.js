@@ -1,4 +1,5 @@
 const globalState = require('./utils/globalState');
+const submissionQueue = require('./utils/submissionQueue');
 
 const state = {
   students: {},
@@ -93,6 +94,12 @@ function socketHandler(io, prisma) {
       globalState.quizStarted = true;
       globalState.currentQuestionIndex = 1;
       globalState.showLeaderboardOverlay = false;
+      
+      // Flush answered cache so all participants start clean at Q1
+      if (submissionQueue.clearCache) {
+        submissionQueue.clearCache();
+      }
+
       io.emit('leaderboard:display', { show: false });
       io.emit('quiz:start', {
         quizNumber: globalState.activeQuizNumber,

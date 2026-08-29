@@ -13,10 +13,11 @@ async function loadQuestionCache() {
     const questions = await prisma.question.findMany({ orderBy: { id: 'asc' } });
     const cache = {};
     for (const q of questions) {
-      const qNum = q.quizNumber || 1;
+      const qNum = Number(q.quizNumber) || 1;
       if (!cache[qNum]) cache[qNum] = [];
       cache[qNum].push(q);
     }
+    cache['all'] = questions;
     questionCacheByQuiz = cache;
     return cache;
   } catch (err) {
@@ -29,7 +30,11 @@ async function getQuestionsForQuiz(quizNum) {
   if (!questionCacheByQuiz) {
     await loadQuestionCache();
   }
-  return (questionCacheByQuiz && questionCacheByQuiz[quizNum]) ? questionCacheByQuiz[quizNum] : [];
+  const qNum = Number(quizNum) || 1;
+  if (questionCacheByQuiz && questionCacheByQuiz[qNum] && questionCacheByQuiz[qNum].length > 0) {
+    return questionCacheByQuiz[qNum];
+  }
+  return (questionCacheByQuiz && questionCacheByQuiz['all']) ? questionCacheByQuiz['all'] : [];
 }
 
 async function findQuestionById(questionId) {
