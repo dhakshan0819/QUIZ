@@ -68,15 +68,7 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 socketHandler(io, prisma);
 
-const primaryPort = Number(process.env.PORT) || 8080;
-server.listen(primaryPort, '0.0.0.0', () => console.log('Backend listening on 0.0.0.0:' + primaryPort));
-
-if (primaryPort !== 4000) {
-  try {
-    const backupServer = http.createServer(app);
-    io.attach(backupServer);
-    backupServer.listen(4000, '0.0.0.0', () => console.log('Backup listener active on 0.0.0.0:4000'));
-  } catch (e) {
-    console.warn('Backup port 4000 notice:', e.message);
-  }
-}
+const port = Number(process.env.PORT) || 8080;
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Backend listening on 0.0.0.0:${port}`);
+});
