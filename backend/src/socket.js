@@ -1,3 +1,5 @@
+const globalState = require('./utils/globalState');
+
 const state = {
   students: {},
   registerToSocket: {},
@@ -85,7 +87,6 @@ function socketHandler(io, prisma) {
 
     socket.on('admin:startQuiz', (payload) => {
       const { quizNumber } = payload || {};
-      const { globalState } = require('./routes/quiz');
       if (quizNumber && Number(quizNumber) > 0) {
         globalState.activeQuizNumber = Number(quizNumber);
       }
@@ -101,7 +102,6 @@ function socketHandler(io, prisma) {
     });
 
     socket.on('admin:nextQuestion', () => {
-      const { globalState } = require('./routes/quiz');
       globalState.currentQuestionIndex += 1;
       globalState.showLeaderboardOverlay = false;
       io.emit('leaderboard:display', { show: false });
@@ -112,7 +112,6 @@ function socketHandler(io, prisma) {
     });
 
     socket.on('admin:showLeaderboard', async (payload) => {
-      const { globalState } = require('./routes/quiz');
       const show = payload?.show !== undefined ? Boolean(payload.show) : true;
       globalState.showLeaderboardOverlay = show;
       try {
@@ -129,7 +128,6 @@ function socketHandler(io, prisma) {
     });
 
     socket.on('admin:stopQuiz', () => {
-      const { globalState } = require('./routes/quiz');
       globalState.quizStarted = false;
       globalState.showLeaderboardOverlay = false;
       io.emit('leaderboard:display', { show: false });

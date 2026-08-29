@@ -3,15 +3,7 @@ const router = express.Router();
 const prisma = require('../db');
 const submissionQueue = require('../utils/submissionQueue');
 
-// In-memory global state for the quiz
-const globalState = {
-  quizStarted: false,
-  activeQuizNumber: 1,
-  currentQuestionIndex: 1,
-  showLeaderboardOverlay: false,
-  answerTimeLimit: 15,  // 15 seconds
-  previewTimeLimit: 5   // 5 seconds
-};
+const globalState = require('../utils/globalState');
 
 // In-memory question cache by quiz number for zero-latency response under high load
 let questionCacheByQuiz = null;
