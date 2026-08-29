@@ -18,15 +18,25 @@ function verifyAdmin(req, res, next) {
 router.post('/register', async (req, res)=>{
   const { name, registerNumber, department, year, section } = req.body || {};
   if(!name || !registerNumber) return res.status(400).json({ error: 'name and registerNumber required' });
-  const existing = await prisma.student.findUnique({ where: { registerNumber } });
-  if(existing) return res.status(409).json({ error: 'duplicate register number' });
-  const student = await prisma.student.create({ data: { name, registerNumber, department: department || '', year: year || '', section: section || '' } });
-  return res.json({ student });
+  try {
+    const existing = await prisma.student.findUnique({ where: { registerNumber } });
+    if(existing) return res.status(409).json({ error: 'duplicate register number' });
+    const student = await prisma.student.create({ data: { name, registerNumber, department: department || '', year: year || '', section: section || '' } });
+    return res.json({ student });
+  } catch (err) {
+    console.error('Registration error:', err.message);
+    return res.status(500).json({ error: 'Database registration error: ' + err.message });
+  }
 });
 
 router.get('/', async (req, res)=>{
-  const students = await prisma.student.findMany({ orderBy: { createdAt: 'asc' } });
-  res.json({ students });
+  try {
+    const students = await prisma.student.findMany({ orderBy: { createdAt: 'asc' } });
+    res.json({ students });
+  } catch (err) {
+    console.error('Fetch students error:', err.message);
+    res.status(500).json({ error: 'Database error fetching students' });
+  }
 });
 
 router.delete('/:registerNumber', verifyAdmin, async (req, res) => {
