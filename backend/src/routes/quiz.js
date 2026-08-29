@@ -422,6 +422,7 @@ router.get('/next', async (req, res) => {
   const currentQuizNum = globalState.activeQuizNumber;
   const currentLiveScore = submissionQueue.getStudentScore(student.id, student.score);
 
+  // 1. Fetch questions for current active quiz sorted strictly by ID ascending
   const quizQuestions = await getQuestionsForQuiz(currentQuizNum);
 
   if (!quizQuestions || quizQuestions.length === 0) {
@@ -433,23 +434,28 @@ router.get('/next', async (req, res) => {
     });
   }
 
-  // Filter available questions using in-memory answer cache
-  const availableQuestions = quizQuestions.filter(q => !submissionQueue.hasAnswered(student.id, q.id));
-  const answeredCount = quizQuestions.length - availableQuestions.length;
+  // 2. Count how many questions in THIS active quiz the student has answered
+  const answeredInThisQuiz = quizQuestions.filter(q => submissionQueue.hasAnswered(student.id, q.id));
+  const answeredCount = answeredInThisQuiz.length;
 
-  if (availableQuestions.length === 0) {
+  if (answeredCount >= quizQuestions.length) {
     return res.json({ 
       quizStarted: true, 
       complete: true, 
       activeQuizNumber: currentQuizNum,
       totalQuestions: quizQuestions.length,
-      answeredCount,
+      answeredCount: quizQuestions.length,
       totalScore: currentLiveScore
     });
   }
 
-  // Serve questions in fixed sequential order so all students get the exact same question at once (no shuffling)
-  const nextQuestion = quizQuestions[answeredCount] || availableQuestions[0];
+  // 3. Determine exact target question index (deterministic 0, 1, 2... for all users)
+  let targetIndex = answeredCount;
+  if (globalState.currentQuestionIndex && globalState.currentQuestionIndex > 0) {
+    targetIndex = Math.min(quizQuestions.length - 1, globalState.currentQuestionIndex - 1);
+  }
+
+  const nextQuestion = quizQuestions[targetIndex] || quizQuestions[0];
 
   const { correct, explanation, fact, ...safeQuestion } = nextQuestion;
 

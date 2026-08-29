@@ -1,4 +1,4 @@
-// Production Server Entry Point (Railway deployment sync 2026-08-29)
+// Production Server Entry Point - Synchronized Sequential Questions (2026-08-29)
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection:', reason);
 });
