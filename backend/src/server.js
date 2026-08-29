@@ -28,6 +28,20 @@ app.get('/api/questions', async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+const path = require('path');
+const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
+const fs = require('fs');
+
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path === '/health') {
+      return next();
+    }
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
