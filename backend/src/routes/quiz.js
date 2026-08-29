@@ -470,91 +470,7 @@ router.get('/next', async (req, res) => {
       total: totalQuestions, 
       quizNumber: currentQuizNum 
     }
-
-    if (!registerNumber) {
-      return res.status(400).json({ error: 'registerNumber required' });
-    }
-
-    const { isStudentLocked, getLockedReason } = require('../socket');
-    if (isStudentLocked && isStudentLocked(registerNumber)) {
-      return res.json({
-        quizStarted: true,
-        locked: true,
-        lockReason: getLockedReason(registerNumber) || 'Anti-cheat lock active. Awaiting host approval.',
-        activeQuizNumber: globalState.activeQuizNumber
-      });
-    }
-
-    let student = quizCache.getStudentByRegister(registerNumber);
-    if (!student) {
-      student = await prisma.student.findUnique({ where: { registerNumber } }).catch(() => null);
-      if (student) quizCache.cacheStudent(student);
-    }
-
-    if (!student) {
-      return res.status(404).json({ error: 'student not found' });
-    }
-
-    const currentQuizNum = globalState.activeQuizNumber;
-    const currentLiveScore = submissionQueue.getStudentScore(student.id, student.score || 0);
-
-    // Fast RAM lookup for quiz questions
-    let quizQuestions = quizCache.getQuestionsForQuiz(currentQuizNum);
-    if (quizQuestions.length === 0) {
-      quizQuestions = quizCache.getQuestionsForQuiz(1); // fallback to quiz 1
-    }
-
-    if (quizQuestions.length === 0) {
-      return res.json({ 
-        quizStarted: true, 
-        complete: true, 
-        activeQuizNumber: currentQuizNum,
-        message: `No questions found in Quiz ${currentQuizNum}`
-      });
-    }
-
-    const answeredSet = quizCache.getAnsweredQuestionIds(student.id);
-    const availableQuestions = quizQuestions.filter(q => !answeredSet.has(q.id));
-
-    if (availableQuestions.length === 0) {
-      return res.json({ 
-        quizStarted: true, 
-        complete: true, 
-        activeQuizNumber: currentQuizNum,
-        totalQuestions: quizQuestions.length,
-        answeredCount: quizQuestions.length,
-        totalScore: currentLiveScore
-      });
-    }
-
-    // Pick a random question ID from available questions in this quiz
-    const randomIndex = Math.floor(Math.random() * availableQuestions.length);
-    const nextQuestion = availableQuestions[randomIndex];
-
-    // Remove correct answer before sending to client
-    const { correct, explanation, fact, ...safeQuestion } = nextQuestion;
-
-    const totalQuestions = quizQuestions.length;
-    const currentQuestionNumber = Math.min(totalQuestions, (totalQuestions - availableQuestions.length) + 1);
-
-    res.json({ 
-      quizStarted: true, 
-      complete: false, 
-      activeQuizNumber: currentQuizNum,
-      answerTimeLimit: globalState.answerTimeLimit,
-      previewTimeLimit: globalState.previewTimeLimit,
-      question: safeQuestion,
-      totalScore: currentLiveScore,
-      progress: { 
-        current: currentQuestionNumber, 
-        total: totalQuestions, 
-        quizNumber: currentQuizNum 
-      }
-    });
-  } catch (err) {
-    console.error('Error in /quiz/next:', err);
-    res.status(500).json({ error: 'Failed to retrieve next question' });
-  }
+  });
 });
 
 // Submit an answer (Ultra-fast in-memory processing with batch queueing)
@@ -565,56 +481,17 @@ router.post('/submit', async (req, res) => {
     return res.status(400).json({ error: 'Quiz has not started' });
   }
 
-    if (!registerNumber || !questionId || !option) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
+  if (!registerNumber || !questionId || !option) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
 
-    const { isStudentLocked, getLockedReason } = require('../socket');
-    if (isStudentLocked && isStudentLocked(registerNumber)) {
-      return res.status(403).json({ 
-        error: 'Your screen is locked due to an anti-cheat violation. You cannot submit answers until the host unlocks your screen.',
-        locked: true,
-        reason: getLockedReason(registerNumber)
-      });
-    }
-
-    let student = quizCache.getStudentByRegister(registerNumber);
-    if (!student) {
-      student = await prisma.student.findUnique({ where: { registerNumber } }).catch(() => null);
-      if (student) quizCache.cacheStudent(student);
-    }
-    if (!student) return res.status(404).json({ error: 'Student not found' });
-
-    let question = quizCache.getQuestion(questionId);
-    if (!question) {
-      question = await prisma.question.findUnique({ where: { id: Number(questionId) } }).catch(() => null);
-    }
-    if (!question) return res.status(404).json({ error: 'Question not found' });
-
-    quizCache.markQuestionAnswered(student.id, question.id);
-
-    // Process submission instantly in-memory (< 1ms) and queue for batch write
-    const result = submissionQueue.handleSubmission({
-      student,
-      question,
-      option,
-      timeMs
+  const { isStudentLocked, getLockedReason } = require('../socket');
+  if (isStudentLocked && isStudentLocked(registerNumber)) {
+    return res.status(403).json({ 
+      error: 'Your screen is locked due to an anti-cheat violation. You cannot submit answers until the host unlocks your screen.',
+      locked: true,
+      reason: getLockedReason(registerNumber)
     });
-
-    return res.json({
-      success: true,
-      correct: question.correct,
-      explanation: question.explanation,
-      fact: question.fact,
-      isCorrect: result.isCorrect,
-      previewTimeLimit: globalState.previewTimeLimit,
-      pointsAwarded: result.pointsAwarded,
-      totalScore: result.totalScore,
-      alreadyAnswered: result.isDuplicate
-    });
-  } catch (err) {
-    console.error('Error in /quiz/submit:', err);
-    res.status(500).json({ error: 'Submission processing error' });
   }
 
   const student = await submissionQueue.getStudent(registerNumber);
