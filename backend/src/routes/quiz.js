@@ -448,9 +448,8 @@ router.get('/next', async (req, res) => {
     });
   }
 
-  // Pick a random question from available questions
-  const randomIndex = Math.floor(Math.random() * availableQuestions.length);
-  const nextQuestion = availableQuestions[randomIndex];
+  // Serve questions in fixed sequential order so all students get the exact same question at once (no shuffling)
+  const nextQuestion = quizQuestions[answeredCount] || availableQuestions[0];
 
   const { correct, explanation, fact, ...safeQuestion } = nextQuestion;
 
